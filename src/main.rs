@@ -54,9 +54,9 @@ struct ImageryFile {
     kind: FileKind,
     boundary: Polygon<f64>,
     resolution: Resolution,
-    num_bands: i32,
-    red_band: Option<i32>,
-    ni_band: Option<i32>
+    num_bands: u16,  
+    red_band: Option<u16>,
+    ni_band: Option<u16>
 }
 
 // RasterAOI represents a raster image with a given area of interest.
