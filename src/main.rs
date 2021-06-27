@@ -1,12 +1,13 @@
 #[macro_use] extern crate rocket;
 use std::f64;
-use std::convert::TryInto;
 use std::path::PathBuf;
-use std::process::Command;
 use std::fs;
 use std::u32;
 use std::u8;
+use chrono::DateTime;
+use chrono::offset::FixedOffset;
 use geo::polygon;
+use gdal::{Dataset, Metadata};
 use proj::Proj;
 use geo::algorithm::intersects::Intersects;
 use geo_types::Polygon;
@@ -52,7 +53,9 @@ struct ImageryFile {
     kind: FileKind,
     boundary: Polygon<f64>,
     resolution: Resolution,
-    num_bands: u16,  
+    num_bands: u16,
+    cloud_coverage: Option<f64>,
+    timestamp: Option<DateTime<FixedOffset>>,
     red_band: Option<u16>,
     ni_band: Option<u16>
 }
@@ -82,10 +85,29 @@ fn get_tile_bounds(z: u8, x:u32, y:u32) -> Polygon<f64> {
 // get_resolution_from_geotransform uses a raster image's geotransform
 // to determine the resolution.
 // https://gdal.org/tutorials/geotransforms_tut.html
-fn get_resolution_from_geotransform(geotransform: Vec<f64>) -> Resolution {
+fn get_resolution_from_geotransform(geotransform: &[f64]) -> Resolution {
     let xwidth = (geotransform[1].powi(2) + geotransform[2].powi(2)).sqrt();
     let ywidth = (geotransform[5].powi(2) + geotransform[4].powi(2)).sqrt();
     Resolution{x: xwidth, y: ywidth}
+}
+
+// get_extent calculates the extent of a given dataset and
+// returns a geo_types::Polygon representing it.
+fn get_extent(dataset: &Dataset) -> Polygon<f64> {
+    let geotransform = dataset.geo_transform().unwrap();
+    let (width, height) = dataset.raster_size();
+    let res = get_resolution_from_geotransform(&geotransform);
+
+    let xmin = geotransform[0];
+    let ymin = geotransform[3];
+    let xmax = xmin + width as f64 * res.x;
+    let ymax = ymin + height as f64 * res.y;
+    polygon![
+        (x: xmin, y: ymin),
+        (x: xmax, y: ymin),
+        (x: xmax, y: ymax),
+        (x: xmin, y: ymax)
+    ]
 }
 
 // register_images searches the imagery directory and collects
@@ -101,33 +123,44 @@ fn register_images() -> Vec<ImageryFile> {
     // iterate through the files in img_dir and capture information
     // using gdalinfo.  We need to get the extent and the geotransform
     // (to calculate the image resolution).
-    for path in img_dir {
-        let name = path.unwrap().path();
-        println!("{}", name.display());
+    for file in img_dir {
+        let filename = file.unwrap().path();
+        println!("{}", filename.display());
 
-        // run gdalinfo and capture the output into a GDALInfo instance.
-        let output = Command::new("gdalinfo")
-                .arg(&name)
-                    .arg("-json")
-                .output()
-                .expect("gdalinfo failed");
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let img: GDALInfo = serde_json::from_str(&stdout).unwrap();
+        // open the dataset using GDAL.
+        // panics if cannot be opened by GDAL.  fix before v0.0.1!
+        let dataset = Dataset::open(&filename).unwrap();
+        let poly = get_extent(&dataset);
+        let projection = dataset.projection();
 
-        // turn the wgs84Extent value into a Polygon
-        let poly: Polygon<f64> = img.wgs84_extent.value.try_into().unwrap();
+        let num_bands = dataset.raster_count() as u16;
         
+        //Check metadata for cloud coverage
+        let cloud_coverage: Option<f64> = match dataset.metadata_item("CLOUD_COVERAGE_ASSESSMENT", "METADATA") {
+            Some(s) => Some(s.parse::<f64>().unwrap()),
+            None => None,
+        };
+
+        let timestamp: Option<DateTime<FixedOffset>> = match dataset.metadata_item("PRODUCT_START_TIME", "METADATA") {
+            Some(s) => Some(DateTime::parse_from_rfc3339(&s).unwrap()),
+            None => None,
+        };
+
+
+
         // convert extent polygon into EPGS:3857 web mercator
-        let transform_4326_3857 = Proj::new_known_crs("EPSG:4326", "EPSG:3857", None).unwrap();
-        let poly_mercator: Polygon<f64> = transform::transform_polygon(transform_4326_3857, &poly);
+        let transform_4326_3857 = Proj::new_known_crs(&projection, "EPSG:3857", None).unwrap();
+        let boundary: Polygon<f64> = transform::transform_polygon(transform_4326_3857, &poly);
 
         // add the file information to the coverage vector.
         let file = ImageryFile{
-            filename: name,
+            filename,
             kind: FileKind::Imagery,
-            boundary: poly_mercator,
-            resolution: get_resolution_from_geotransform(img.geo_transform),
-            num_bands: 1, // unimplemented
+            boundary,
+            resolution: get_resolution_from_geotransform(&dataset.geo_transform().unwrap()),
+            num_bands, // unimplemented
+            cloud_coverage,
+            timestamp,
             red_band: None, // unimplemented
             ni_band: None  // unimplemented
         };

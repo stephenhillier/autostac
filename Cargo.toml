@@ -7,6 +7,8 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+chrono = "0.4.19"
+gdal = "0.8.0"
 geo = "0.18.0"
 geo-booleanop = "0.3.2"
 geo-types = "0.7.2"
