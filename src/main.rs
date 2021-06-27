@@ -11,8 +11,6 @@ use proj::Proj;
 use geo::algorithm::intersects::Intersects;
 use geo_types::Polygon;
 use rocket::State;
-use serde;
-use serde_json;
 use tile_grid::Grid;
 
 mod transform;
@@ -135,12 +133,12 @@ fn register_images() -> Vec<ImageryFile> {
         };
         coverage.push(file);
     }
-    return coverage;
+    coverage
 }
 
 // files_intersecting_bounds returns the subset of files from `file_list` that intersect
 // with `bounds`.
-fn files_intersecting_bounds(file_list: &Vec<ImageryFile>, bounds: &Polygon<f64>) -> Vec<RasterAOI> {
+fn files_intersecting_bounds(file_list: &[ImageryFile], bounds: &Polygon<f64>) -> Vec<RasterAOI> {
     let mut matching_files: Vec<RasterAOI> = Vec::new();
     for f in file_list.iter() {
         if f.boundary.intersects(bounds) {
@@ -152,7 +150,7 @@ fn files_intersecting_bounds(file_list: &Vec<ImageryFile>, bounds: &Polygon<f64>
             matching_files.push(aoi);
         }
     };
-    return matching_files;
+    matching_files
 }
 
 #[get("/tile/<z>/<x>/<y>")]
