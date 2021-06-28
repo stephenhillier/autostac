@@ -7,34 +7,28 @@ use std::u8;
 use chrono::DateTime;
 use chrono::offset::FixedOffset;
 use geo::polygon;
+use geojson::{Geometry, Feature, FeatureCollection};
 use gdal::{Dataset, Metadata};
 use proj::Proj;
 use geo::algorithm::intersects::Intersects;
 use geo_types::Polygon;
+use serde_json::{Map, Value, to_value, to_string};
+use serde::{Serialize};
 use rocket::State;
 use tile_grid::Grid;
 
 mod transform;
 
 // types of files we may encounter
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 enum FileKind {
     Imagery
-}
-
-// GDALInfo contains information about a raster file
-// that has been catalogued.
-#[derive(serde::Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-struct GDALInfo {
-    wgs84_extent: geojson::Geometry,
-    geo_transform: Vec<f64>
 }
 
 // Resolution represents the horizontal (x) and vertical (y)
 // length of a single pixel, in the map units.
 // TODO:  this needs to be converted to m, not use the base map units.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize)]
 struct Resolution {
     y: f64,
     x: f64
@@ -47,11 +41,9 @@ struct DataFiles {
     imagery_files: Vec<ImageryFile>
 }
 
-#[derive(Debug)]
-struct ImageryFile {
-    filename: PathBuf,
-    kind: FileKind,
-    boundary: Polygon<f64>,
+#[derive(Debug, Clone, Serialize)]
+struct ImageryFileProperties {
+    filename: String,
     resolution: Resolution,
     num_bands: u16,
     cloud_coverage: Option<f64>,
@@ -60,12 +52,12 @@ struct ImageryFile {
     ni_band: Option<u16>
 }
 
-// RasterAOI represents a raster image with a given area of interest.
-#[derive(Debug)]
-struct RasterAOI {
-    filename: PathBuf, 
+#[derive(Debug, Clone)]
+struct ImageryFile {
+    filename: PathBuf,
+    kind: FileKind,
     boundary: Polygon<f64>,
-    resolution: Resolution
+    properties: ImageryFileProperties
 }
 
 // get_tile_bounds returns the tile boundaries (web mercator EPSG:3857)
@@ -94,14 +86,10 @@ fn get_resolution_from_geotransform(geotransform: &[f64]) -> Resolution {
 // get_extent calculates the extent of a given dataset and
 // returns a geo_types::Polygon representing it.
 fn get_extent(dataset: &Dataset) -> Polygon<f64> {
-    let geotransform = dataset.geo_transform().unwrap();
+    let [xmin, x_size, _, ymin, _, y_size] = dataset.geo_transform().unwrap();
     let (width, height) = dataset.raster_size();
-    let res = get_resolution_from_geotransform(&geotransform);
-
-    let xmin = geotransform[0];
-    let ymin = geotransform[3];
-    let xmax = xmin + width as f64 * res.x;
-    let ymax = ymin + height as f64 * res.y;
+    let xmax = xmin + width as f64 * x_size;
+    let ymax = ymin + height as f64 * y_size;
     polygon![
         (x: xmin, y: ymin),
         (x: xmax, y: ymin),
@@ -128,20 +116,19 @@ fn register_images() -> Vec<ImageryFile> {
         println!("{}", filename.display());
 
         // open the dataset using GDAL.
-        // panics if cannot be opened by GDAL.  fix before v0.0.1!
+        // panics if cannot be opened by GDAL.  TODO: fix before v0.0.1!
         let dataset = Dataset::open(&filename).unwrap();
         let poly = get_extent(&dataset);
         let projection = dataset.projection();
-
         let num_bands = dataset.raster_count() as u16;
         
         //Check metadata for cloud coverage
-        let cloud_coverage: Option<f64> = match dataset.metadata_item("CLOUD_COVERAGE_ASSESSMENT", "METADATA") {
+        let cloud_coverage: Option<f64> = match dataset.metadata_item("CLOUD_COVERAGE_ASSESSMENT", "") {
             Some(s) => Some(s.parse::<f64>().unwrap()),
             None => None,
         };
 
-        let timestamp: Option<DateTime<FixedOffset>> = match dataset.metadata_item("PRODUCT_START_TIME", "METADATA") {
+        let timestamp: Option<DateTime<FixedOffset>> = match dataset.metadata_item("PRODUCT_START_TIME", "") {
             Some(s) => Some(DateTime::parse_from_rfc3339(&s).unwrap()),
             None => None,
         };
@@ -151,18 +138,23 @@ fn register_images() -> Vec<ImageryFile> {
         // convert extent polygon into EPGS:3857 web mercator
         let transform_4326_3857 = Proj::new_known_crs(&projection, "EPSG:3857", None).unwrap();
         let boundary: Polygon<f64> = transform::transform_polygon(transform_4326_3857, &poly);
-
+        println!("{:?}", boundary);
         // add the file information to the coverage vector.
-        let file = ImageryFile{
-            filename,
-            kind: FileKind::Imagery,
-            boundary,
+        let properties = ImageryFileProperties {
+            filename: filename.as_path().display().to_string(),
             resolution: get_resolution_from_geotransform(&dataset.geo_transform().unwrap()),
-            num_bands, // unimplemented
+            num_bands,
             cloud_coverage,
             timestamp,
             red_band: None, // unimplemented
             ni_band: None  // unimplemented
+        };
+
+        let file = ImageryFile{
+            filename,
+            kind: FileKind::Imagery,
+            boundary,
+            properties
         };
         coverage.push(file);
     }
@@ -171,19 +163,29 @@ fn register_images() -> Vec<ImageryFile> {
 
 // files_intersecting_bounds returns the subset of files from `file_list` that intersect
 // with `bounds`.
-fn files_intersecting_bounds(file_list: &[ImageryFile], bounds: &Polygon<f64>) -> Vec<RasterAOI> {
-    let mut matching_files: Vec<RasterAOI> = Vec::new();
+fn files_intersecting_bounds(file_list: &[ImageryFile], bounds: &Polygon<f64>) -> Vec<ImageryFile> {
+    let mut matching_files: Vec<ImageryFile> = Vec::new();
     for f in file_list.iter() {
         if f.boundary.intersects(bounds) {
-            let aoi = RasterAOI {
-                filename: f.filename.to_owned(),
-                boundary: f.boundary.clone(),
-                resolution: f.resolution
-            };
-            matching_files.push(aoi);
+            matching_files.push(f.to_owned());
         }
     };
     matching_files
+}
+
+fn imagery_properties_to_map(props: &ImageryFileProperties) -> Map<String,Value> {
+    let mut properties = Map::new();
+
+    // silly way to create properties map...
+    // need to fix (find a better way to convert to a format that fits in Feature.properties)
+    properties.insert(String::from("filename"), to_value(&props.filename).unwrap());
+    properties.insert(String::from("resolution"), to_value(&props.resolution).unwrap());
+    properties.insert(String::from("num_bands"), to_value(&props.num_bands).unwrap());
+    properties.insert(String::from("cloud_coverage"), to_value(&props.cloud_coverage).unwrap());
+    properties.insert(String::from("timestamp"), to_value(&props.timestamp).unwrap());
+    properties.insert(String::from("red_band"), to_value(&props.red_band).unwrap());
+    properties.insert(String::from("ni_band"), to_value(&props.ni_band).unwrap());
+    properties
 }
 
 #[get("/tile/<z>/<x>/<y>")]
@@ -191,7 +193,36 @@ fn tile(z: u8, x:u32, y:u32, coverage: &State<DataFiles>) -> String {
     let bounds = get_tile_bounds(z, x, y);
     let files_for_tile = files_intersecting_bounds(&coverage.inner().imagery_files, &bounds);
 
+    // stand-in for an actual tile
     format!("{} {} {} :\n {:?} :\n {:?}", z, x, y, bounds, files_for_tile)
+}
+
+// returns a set of GeoJSON FeatureCollections representing
+// data collections grouped into categories.
+// So far only imagery (satellite imagery etc) is supported.
+#[get("/collections")]
+fn collections(coverage: &State<DataFiles>) -> String {
+    let mut fc = FeatureCollection {
+        bbox: None,
+        features: vec![],
+        foreign_members: None
+    };
+    for img in &coverage.inner().imagery_files {
+        let geometry = Geometry::from(&img.boundary);
+        
+
+        let properties = imagery_properties_to_map(&img.properties);
+
+        let feat = Feature {
+            id: None,
+            bbox: None,
+            geometry: Some(geometry),
+            properties: Some(properties),
+            foreign_members: None
+        };
+        fc.features.push(feat);
+    }
+    to_string(&fc).unwrap()
 }
 
 #[get("/")]
@@ -209,5 +240,5 @@ fn rocket() -> _ {
     // start application
     rocket::build()
         .manage(coverage)
-        .mount("/", routes![tile, index])
+        .mount("/", routes![tile, collections, index])
 }
