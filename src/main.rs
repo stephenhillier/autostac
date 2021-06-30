@@ -3,8 +3,7 @@ use std::f64;
 use std::u32;
 use std::u8;
 use geo::polygon;
-use geojson::{Geometry, Feature, FeatureCollection};
-use geo::algorithm::intersects::Intersects;
+use geojson::{FeatureCollection};
 use geo_types::Polygon;
 use raster::AsFeatureCollection;
 use serde_json::{to_string};
@@ -30,22 +29,10 @@ fn get_tile_bounds(z: u8, x:u32, y:u32) -> Polygon<f64> {
     )
 }
 
-/// files_intersecting_bounds returns the subset of files from `file_list` that intersect
-/// with `bounds`.
-fn files_intersecting_bounds(file_list: &[raster::ImageryFile], bounds: &Polygon<f64>) -> Vec<raster::ImageryFile> {
-    let mut matching_files: Vec<raster::ImageryFile> = Vec::new();
-    for f in file_list.iter() {
-        if f.boundary.intersects(bounds) {
-            matching_files.push(f.to_owned());
-        }
-    };
-    matching_files
-}
-
 #[get("/tile/<z>/<x>/<y>")]
 fn tile(z: u8, x:u32, y:u32, coverage: &State<raster::Service>) -> String {
     let bounds = get_tile_bounds(z, x, y);
-    let files_for_tile = files_intersecting_bounds(&coverage.inner().imagery.files(), &bounds);
+    let files_for_tile = &coverage.inner().imagery.intersects(&bounds);
 
     // stand-in for an actual tile
     format!("{} {} {} :\n {:?} :\n {:?}", z, x, y, bounds, files_for_tile)
@@ -66,10 +53,8 @@ struct CollectionsResponse {
 /// TODO:  refactor collections into methods on their respective services.
 #[get("/collections")]
 fn collections(coverage: &State<raster::Service>) -> Json<String> {
-
-
-    let imagery = coverage.imagery.files().as_feature_collection();
-    let rasters = coverage.rasters.files().as_feature_collection();
+    let imagery = coverage.imagery.all().as_feature_collection();
+    let rasters = coverage.rasters.all().as_feature_collection();
 
     let collection = CollectionsResponse {
         imagery,

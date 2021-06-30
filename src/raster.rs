@@ -4,6 +4,7 @@ use std::fs;
 use chrono::DateTime;
 use chrono::offset::FixedOffset;
 use geo::polygon;
+use geo::algorithm::intersects::Intersects;
 use gdal::{Dataset, Metadata};
 use geojson::Feature;
 use geojson::FeatureCollection;
@@ -84,9 +85,18 @@ impl RasterRepository {
   }
 
   /// returns all the files in RasterRepository.
-  /// in the future, this will support filtering.
-  pub fn files(&self) -> &Vec<RasterFile> {
+  pub fn all(&self) -> &Vec<RasterFile> {
     &self.files
+  }
+
+  pub fn intersects(&self, bounds: &Polygon<f64>) -> Vec<RasterFile> {
+    let mut matching_files: Vec<RasterFile> = Vec::new();
+    for f in self.files.iter() {
+        if f.boundary.intersects(bounds) {
+            matching_files.push(f.to_owned());
+        }
+    };
+    matching_files
   }
 }
 
@@ -171,8 +181,18 @@ impl ImageryRepository {
   }
 
   /// returns all the files in ImageryRepository.
-  pub fn files(&self) -> &Vec<ImageryFile> {
+  pub fn all(&self) -> &Vec<ImageryFile> {
     &self.files
+  }
+
+  pub fn intersects(&self, bounds: &Polygon<f64>) -> Vec<ImageryFile> {
+    let mut matching_files: Vec<ImageryFile> = Vec::new();
+    for f in self.files.iter() {
+        if f.boundary.intersects(bounds) {
+            matching_files.push(f.to_owned());
+        }
+    };
+    matching_files
   }
 }
 
