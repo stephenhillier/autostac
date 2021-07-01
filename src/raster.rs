@@ -31,6 +31,7 @@ pub struct Service {
 
 /// Convert a list of imagery metadata into a GeoJSON FeatureCollection
 pub trait AsFeatureCollection {
+  /// converts a collection of files into a GeoJSON FeatureCollection
   fn as_feature_collection(self) -> FeatureCollection;
 }
 
@@ -65,7 +66,7 @@ impl RasterRepository {
       // Panics if cannot be opened by GDAL.  TODO: fix before v0.0.1!
       let dataset = Dataset::open(&filename).unwrap();
       let poly = get_extent(&dataset);
-      let projection = dataset.projection();
+      let crs = dataset.projection();
       let num_bands = dataset.raster_count() as u16;
       
       // Capture the IMAGEDESCRIPTION tag. We can allow users to
@@ -77,11 +78,12 @@ impl RasterRepository {
       // Convert extent polygon into EPGS:3857 web mercator
       // web mercator is used for convenient use with web maps (showing the extents
       // on a map), but this could change (lat/long?)
-      let transform_4326_3857 = Proj::new_known_crs(&projection, "EPSG:3857", None).unwrap();
-      let boundary: Polygon<f64> = transform::transform_polygon(transform_4326_3857, &poly);
+      let transform_to_3857 = Proj::new_known_crs(&crs, "EPSG:3857", None).unwrap();
+      let boundary: Polygon<f64> = transform::transform_polygon(transform_to_3857, &poly);
       // Add the file information to the coverage vector.
       let properties = RasterFileProperties {
           filename: filename.as_path().display().to_string(),
+          crs,
           resolution: get_resolution_from_geotransform(&dataset.geo_transform().unwrap()),
           description,
           num_bands,
@@ -149,7 +151,7 @@ impl ImageryRepository {
         // open the dataset using GDAL.
         let dataset = Dataset::open(&filename).unwrap();
         let poly = get_extent(&dataset);
-        let projection = dataset.projection();
+        let crs = dataset.projection();
         let num_bands = dataset.raster_count() as u16;
         
         // Check metadata for cloud coverage
@@ -173,12 +175,13 @@ impl ImageryRepository {
             .metadata_item("TIFFTAG_IMAGEDESCRIPTION", "");
 
         // convert extent polygon into EPGS:3857 web mercator
-        let transform_4326_3857 = Proj::new_known_crs(&projection, "EPSG:3857", None).unwrap();
-        let boundary: Polygon<f64> = transform::transform_polygon(transform_4326_3857, &poly);
+        let transform_to_3857 = Proj::new_known_crs(&crs, "EPSG:3857", None).unwrap();
+        let boundary: Polygon<f64> = transform::transform_polygon(transform_to_3857, &poly);
 
         // add the file information to the coverage vector.
         let properties = ImageryFileProperties {
             filename: filename.as_path().display().to_string(),
+            crs,
             resolution: get_resolution_from_geotransform(&dataset.geo_transform().unwrap()),
             description,
             num_bands,
@@ -279,6 +282,7 @@ pub struct Resolution {
 #[derive(Debug,Clone)]
 pub struct ImageryFileProperties {
   pub filename: String,
+  pub crs: String,
   pub resolution: Resolution,
   pub num_bands: u16,
   pub description: Option<String>,
@@ -297,6 +301,7 @@ impl ImageryFileProperties {
       // This is a silly way to create a properties map...
       // Find a better way to convert to a format that fits in Feature.properties
       properties.insert(String::from("filename"), to_value(&self.filename).unwrap());
+      properties.insert(String::from("crs"), to_value(&self.crs).unwrap());
       properties.insert(String::from("resolution"), to_value(&self.resolution).unwrap());
       properties.insert(String::from("num_bands"), to_value(&self.num_bands).unwrap());
       properties.insert(String::from("cloud_coverage"), to_value(&self.cloud_coverage).unwrap());
@@ -319,6 +324,7 @@ pub struct ImageryFile {
 #[derive(Debug, Clone)]
 pub struct RasterFileProperties {
     pub filename: String,
+    pub crs: String,
     pub resolution: Resolution,
     pub num_bands: u16,
     pub description: Option<String>
@@ -328,6 +334,7 @@ impl RasterFileProperties {
     pub fn to_map(&self) -> Map<String, Value> {
         let mut properties = Map::new();
         properties.insert(String::from("filename"), to_value(&self.filename).unwrap());
+        properties.insert(String::from("crs"), to_value(&self.crs).unwrap());
         properties.insert(String::from("resolution"), to_value(&self.resolution).unwrap());
         properties.insert(String::from("description"), to_value(&self.description).unwrap());
         properties.insert(String::from("num_bands"), to_value(&self.num_bands).unwrap());
