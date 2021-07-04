@@ -89,8 +89,8 @@ fn collections(coverage: &State<raster::Service>) -> Json<String> {
 /// based on https://github.com/radiantearth/stac-api-spec/blob/master/overview.md#example-landing-page
 #[get("/")]
 fn landing() -> Json<String> {
-    // use hardcoded defaults for now.
-    // in the future, allow specifying id, title, description.
+    // use hardcoded defaults for id, title, description, and base path while getting started.
+    // in the future, allow specifying these (cli args, or read from a file?).
     let stac_landing = stac::LandingPage::new(
         String::from("rs2"),
         String::from("RS2 Demo"),

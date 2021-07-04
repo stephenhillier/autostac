@@ -1,7 +1,12 @@
-use serde::{Serialize, Deserialize};
+use serde::{Serialize};
+
+/// this STAC implementation was written against the v1.0.0-beta2 version of the
+/// STAC spec.
+static STAC_VERSION: &str = "1.0.0";
+static STAC_CORE_DEF: &str = "https://api.stacspec.org/v1.0.0-beta.2/core";
 
 /// STAC Link relations help describe how each link relates to the current page.
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 #[serde(rename_all = "kebab-case")]
 enum StacRel {
   /// The current page.
@@ -16,8 +21,8 @@ enum StacRel {
 }
 
 /// StacLink objects are used in the `links` field list.
-#[derive(Serialize, Deserialize)]
-struct StacLink {
+#[derive(Serialize)]
+pub struct StacLink {
   /// The relation to the current page. See StacRel
   rel: StacRel,
   /// The media type that the client can expect to be returned by the link
@@ -30,7 +35,7 @@ struct StacLink {
 
 /// A STAC landing page.
 /// conforms to v1.0.0-beta2
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize)]
 pub struct LandingPage {
   stac_version: String,
   id: String,
@@ -42,14 +47,11 @@ pub struct LandingPage {
 
 impl LandingPage {
     pub fn new(id: String, title: String, description: String, base_path: String) -> LandingPage {
-      let stac_version = "1.0.0";
-
       // form the "conforms_to" field.
       // this will have to be updated soon to allow new definitions that the service
       // conforms to.  For now, add the "core" definition (v1.0.0-beta.2).
-      let stac_core_def = "https://api.stacspec.org/v1.0.0-beta.2/core";
       let mut conforms_to: Vec<String> = Vec::new();
-      conforms_to.push(String::from(stac_core_def));
+      conforms_to.push(String::from(STAC_CORE_DEF));
 
       // Add root and self links to a list of links.
       // again, this will have to support catalog links.
@@ -71,11 +73,85 @@ impl LandingPage {
       links.push(self_link);
 
       LandingPage {
-        stac_version: String::from(stac_version),
+        stac_version: String::from(STAC_VERSION),
         id,
         title,
         description,
         conforms_to,
+        links
+      }
+    }
+}
+
+/// A STAC Item.
+/// https://github.com/radiantearth/stac-api-spec/blob/master/stac-spec/item-spec/item-spec.md
+
+#[derive(Serialize)]
+pub struct Item {
+
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CatalogType {
+  Catalog
+}
+
+/// A STAC Catalog.
+/// https://github.com/radiantearth/stac-api-spec/blob/master/stac-spec/catalog-spec/catalog-spec.md
+#[derive(Serialize)]
+pub struct Catalog {
+  #[serde(rename = "type")]
+  pub catalog_type: CatalogType,
+  pub stac_version: String,
+  pub id: String,
+  pub title: String,
+  pub description: String,
+
+  /// TODO:  this might not need to be populated when the catalog is created,
+  /// instead, this field should be created at serialization time
+  /// by a custom serializer for the items field.
+  pub links: Vec<StacLink>,
+  
+  /// the items within the catalog.
+  #[serde(skip)]
+  items: Vec<Item>
+}
+
+impl Catalog {
+    /// create a new Catalog containing a list of Items
+    pub fn new(
+      id: String,
+      title: String,
+      description: String,
+      path: String,
+      items: Vec<Item>,
+    ) -> Catalog {
+      // Add root and self links to a list of links.
+      let mut links: Vec<StacLink> = Vec::new();
+
+      let root_link = StacLink {
+        rel: StacRel::Root,
+        media_type: String::from("application/json"),
+        href: path.to_owned()
+      };
+
+      let self_link = StacLink {
+        rel: StacRel::SelfRel,
+        media_type: String::from("application/json"),
+        href: path.to_owned()
+      };
+      
+      links.push(root_link);
+      links.push(self_link);
+
+      Catalog {
+        catalog_type: CatalogType::Catalog,
+        stac_version: String::from(STAC_VERSION),
+        id,
+        title,
+        description,
+        items,
         links
       }
     }
