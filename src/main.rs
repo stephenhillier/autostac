@@ -12,6 +12,7 @@ use rocket::{State, response::content::Json};
 use wkt::Wkt;
 mod transform;
 mod raster;
+mod stac;
 
 
 #[get("/tiles/<z>/<x>/<y>")]
@@ -84,6 +85,21 @@ fn collections(coverage: &State<raster::Service>) -> Json<String> {
     Json(to_string(&collection).unwrap())
 }
 
+/// STAC API landing page
+/// based on https://github.com/radiantearth/stac-api-spec/blob/master/overview.md#example-landing-page
+#[get("/")]
+fn landing() -> Json<String> {
+    // use hardcoded defaults for now.
+    // in the future, allow specifying id, title, description.
+    let stac_landing = stac::LandingPage::new(
+        String::from("rs2"),
+        String::from("RS2 Demo"),
+        String::from("Demo for the rs2 remote sensing raster data service"),
+        String::from("https://example.org/")
+    );
+    Json(to_string(&stac_landing).unwrap())
+}
+
 #[launch]
 fn rocket() -> _ {
     // initialize raster coverage
@@ -95,6 +111,8 @@ fn rocket() -> _ {
     // start application
     rocket::build()
         .manage(svc)
+        // these API routes do not conform to STAC.
+        // routes are being converted and moved.
         .mount("/api/v1", routes![
             tile,
             rasters_collection_intersecting_polygon,
@@ -103,4 +121,12 @@ fn rocket() -> _ {
             raster_collection,
             collections,
         ])
+        // STAC conforming API.
+        // routes are slowly being moved here.
+        .mount(
+            "/",
+            routes![
+                landing
+            ]
+        )
 }
