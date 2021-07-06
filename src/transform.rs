@@ -5,7 +5,8 @@ use proj::Proj;
 use geo_types::{Polygon,Coordinate};
 use tile_grid::Grid;
 
-pub fn transform_polygon(func: Proj, poly: &Polygon<f64>) -> Polygon<f64> {
+pub fn transform_polygon(poly: &Polygon<f64>, from_crs: &str, to_crs: &str) -> Polygon<f64> {
+  let func = Proj::new_known_crs(from_crs, to_crs, None).unwrap();
   poly.map_coords(|&x| func.convert(x).unwrap())
 }
 
@@ -22,7 +23,7 @@ fn to_lng_lat(x:u32, y:u32, z: u8) -> Coordinate<f64> {
 
 /// to_bounds returns the lat/lng tile boundaries as a geo_types::Polygon<f64>
 /// for a tile from a URL with z/x/y format.
-pub fn to_bounds(z: u8, x:u32, y:u32) -> Polygon<f64> {
+pub fn to_bounds(x:u32, y:u32, z: u8) -> Polygon<f64> {
     polygon!(
         to_lng_lat(x, y+1, z),
         to_lng_lat(x+1, y+1, z),
@@ -32,29 +33,13 @@ pub fn to_bounds(z: u8, x:u32, y:u32) -> Polygon<f64> {
 }
 
 
-/// get_tile_bounds returns the tile boundaries (web mercator EPSG:3857)
-/// for a tile from a URL with z/x/y format.
-pub fn web_mercator_tile_bounds(z: u8, x:u32, y:u32) -> Polygon<f64> {
-  let grid = Grid::web_mercator();
-  let extent = grid.tile_extent_xyz(x, y, z);
-  println!("z:{}, x:{}, y:{}, extent: {:?}", z, x, y, extent);
-  polygon!(
-      (x: extent.minx, y: extent.miny),
-      (x: extent.maxx, y: extent.miny),
-      (x: extent.maxx, y: extent.maxy),
-      (x: extent.minx, y: extent.maxy),
-  )
-}
-
 mod tests {
   use super::*;
   #[test]
   fn test_to_lng_lat() {
       let ul = to_lng_lat(486, 332, 10);
-      let expected =  Coordinate{x:-9.140625, y:53.33087298301705};
+      let expected =  Coordinate{x: -9.140625, y: 53.33087298301705};
       assert_eq!(true, (ul.x - expected.x).abs() < 0.0000001);
       assert_eq!(true, (ul.y - expected.y).abs() < 0.0000001);
   }
 }
-
-

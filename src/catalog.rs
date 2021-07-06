@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::f64;
 use std::path::PathBuf;
 use std::fs;
@@ -6,18 +7,18 @@ use chrono::offset::FixedOffset;
 use geo::polygon;
 use geo::algorithm::intersects::Intersects;
 use gdal::{Dataset, Metadata};
+use geo::prelude::BoundingRect;
 use geojson::Feature;
 use geojson::FeatureCollection;
 use geojson::Geometry;
-use proj::Proj;
 use geo_types::Polygon;
 use serde_json::{Map, Value, to_value};
 use serde::{Serialize};
-
+use url;
+use crate::stac;
 use crate::transform;
 
-/// Service represents the raster service, with repositories for spectral imagery and raster data.
-/// The categories and category names are subject to change.
+/// Service represents the raster imagery service.
 /// For v0.0.1, the idea is that imagery of various sources can be filtered, or automatically
 /// chosen based on resolution, least cloud coverage, or date ranges. Rasters represent
 /// more varied thematic data like digital elevation models, or derived products (hillshade).
@@ -25,8 +26,25 @@ use crate::transform;
 /// make queries like "what resolution of DEM coverage is here".
 #[derive(Debug)]
 pub struct Service {
-    pub imagery: ImageryRepository,
-    pub rasters: RasterRepository
+  pub id: String,
+  pub title: String,
+  pub description: String,
+  pub base_url: url::Url,
+  pub collections: HashMap<String, ImageryCollection>
+}
+
+impl Service {
+    pub fn stac_landing(&self) -> stac::LandingPage {
+      stac::LandingPage::new(
+        self.id.to_owned(),
+        self.title.to_owned(),
+        self.description.to_owned(),
+        &self.base_url,
+        self.collections.as_stac_collections_vec(
+          &self.base_url.join("collections/").unwrap()
+        )
+      )
+    }
 }
 
 /// Convert a list of imagery metadata into a GeoJSON FeatureCollection
@@ -35,100 +53,25 @@ pub trait AsFeatureCollection {
   fn as_feature_collection(self) -> FeatureCollection;
 }
 
-/// RasterRepository stores metadata about raster files.
-/// in the future, other storage (besides an in-memory vec) may
-/// be supported.
-#[derive(Debug)]
-pub struct RasterRepository {
-  files: Vec<RasterFile>
-}
-
-impl RasterRepository {
-  pub fn new() -> RasterRepository {
-    let files = RasterRepository::collect_files();
-    RasterRepository{
-      files
-    }
-  }
-
-  /// Collect raster files in the /data/raster/ dir and return a vec of
-  /// RasterFile metadata.
-  /// This path should be a CLI argument before v0.0.1.
-  pub fn collect_files() -> Vec<RasterFile> {
-    let raster_dir = fs::read_dir("./data/raster/").unwrap();
-    let mut coverage = Vec::new();
-  
-    for file in raster_dir {
-      let filename = file.unwrap().path();
-      println!("{}", filename.display());
-  
-      // Open the dataset using GDAL.
-      // Panics if cannot be opened by GDAL.  TODO: fix before v0.0.1!
-      let dataset = Dataset::open(&filename).unwrap();
-      let poly = get_extent(&dataset);
-      let crs = dataset.projection();
-      let num_bands = dataset.raster_count() as u16;
-      
-      // Capture the IMAGEDESCRIPTION tag. We can allow users to
-      // set this tag as a basic way to group images. e.g. "DEM",
-      // "Stream_Burned_DEM". The tag value is up to the user.
-      let description: Option<String> = dataset
-          .metadata_item("TIFFTAG_IMAGEDESCRIPTION", "");
-  
-      // Convert extent polygon into EPGS:3857 web mercator
-      // web mercator is used for convenient use with web maps (showing the extents
-      // on a map), but this could change (lat/long?)
-      let transform_to_3857 = Proj::new_known_crs(&crs, "EPSG:3857", None).unwrap();
-      let boundary: Polygon<f64> = transform::transform_polygon(transform_to_3857, &poly);
-      // Add the file information to the coverage vector.
-      let properties = RasterFileProperties {
-          filename: filename.as_path().display().to_string(),
-          crs,
-          resolution: get_resolution_from_geotransform(&dataset.geo_transform().unwrap()),
-          description,
-          num_bands,
-      };
-      let file = RasterFile{
-          filename,
-          boundary,
-          properties
-      };
-      coverage.push(file);
-    }
-    coverage
-  }
-
-  /// Returns all the files in RasterRepository.
-  pub fn all(&self) -> &Vec<RasterFile> {
-    &self.files
-  }
-
-  /// Return files in RasterRepository that intersects with bounds.
-  /// currently, bounds must be web mercator (EPSG:3857).
-  pub fn intersects(&self, bounds: &Polygon<f64>) -> Vec<RasterFile> {
-    let mut matching_files: Vec<RasterFile> = Vec::new();
-    for f in self.files.iter() {
-        if f.boundary.intersects(bounds) {
-            matching_files.push(f.to_owned());
-        }
-    };
-    matching_files
-  }
-}
-
-/// ImageryRepository stores metadata about spectral imagery files such as
+/// ImageryCollection stores metadata about spectral imagery files such as
 /// satellite imagery.
 #[derive(Debug)]
-pub struct ImageryRepository {
+pub struct ImageryCollection {
+  pub id: String,
+  title: String,
+  description: String,
   files: Vec<ImageryFile>
 }
 
-impl ImageryRepository {
-  /// Create a new ImageryRepository, populated with files found by
+impl ImageryCollection {
+  /// Create a new ImageryCollection, populated with files found by
   /// collect_files.
-  pub fn new() -> ImageryRepository {
-    let files = ImageryRepository::collect_files();
-    ImageryRepository{
+  pub fn new(id: String, title: String, description: String) -> ImageryCollection {
+    let files = ImageryCollection::collect_files();
+    ImageryCollection{
+      id,
+      title,
+      description,
       files
     }
   }
@@ -145,11 +88,13 @@ impl ImageryRepository {
 
     // iterate through the files in img_dir and capture information
     for file in img_dir {
-        let filename = file.unwrap().path();
-        println!("{}", filename.display());
+      let file = file.unwrap();
+        let path = file.path();
+        let filename = file.path().as_path().file_stem().unwrap().to_str().unwrap().to_owned();
+        println!("{}", filename);
 
         // open the dataset using GDAL.
-        let dataset = Dataset::open(&filename).unwrap();
+        let dataset = Dataset::open(&path).unwrap();
         let poly = get_extent(&dataset);
         let crs = dataset.projection();
         let num_bands = dataset.raster_count() as u16;
@@ -174,13 +119,12 @@ impl ImageryRepository {
         let description: Option<String> = dataset
             .metadata_item("TIFFTAG_IMAGEDESCRIPTION", "");
 
-        // convert extent polygon into EPGS:3857 web mercator
-        let transform_to_3857 = Proj::new_known_crs(&crs, "EPSG:3857", None).unwrap();
-        let boundary: Polygon<f64> = transform::transform_polygon(transform_to_3857, &poly);
+        // convert extent polygon into lat/long
+        let boundary: Polygon<f64> = transform::transform_polygon(&poly, &crs, "EPSG:4326");
 
         // add the file information to the coverage vector.
         let properties = ImageryFileProperties {
-            filename: filename.as_path().display().to_string(),
+            filename: path.as_path().display().to_string(),
             crs,
             resolution: get_resolution_from_geotransform(&dataset.geo_transform().unwrap()),
             description,
@@ -192,6 +136,7 @@ impl ImageryRepository {
         };
 
         let file = ImageryFile{
+            path,
             filename,
             boundary,
             properties
@@ -201,12 +146,38 @@ impl ImageryRepository {
     coverage
   }
 
-  /// returns all the files in ImageryRepository.
+  pub fn stac_collection(
+    &self,
+    base_url: &url::Url
+  ) -> stac::Collection {
+    let collection_url = base_url
+      .join("collections/").unwrap()
+      .join(&(self.id.to_owned() + "/")).unwrap();
+
+    let mut collection = stac::Collection::new(
+      self.id.to_owned(),
+      self.title.to_owned(),
+      self.description.to_owned(),
+      Vec::new(),
+    );
+
+    collection.links.push(collection.root_link(base_url));
+    collection.links.push(collection.self_link(base_url));
+
+    for f in self.all() {
+      let item = f.to_stac_item();
+      collection.links.push(item.item_link(&collection_url));
+    }
+
+    collection
+  }
+
+  /// returns all the files in ImageryCollection.
   pub fn all(&self) -> &Vec<ImageryFile> {
     &self.files
   }
 
-  /// Returns files in ImageryRepository that intersect with bounds (EPSG:3857)
+  /// Returns files in ImageryCollection that intersect with bounds (EPSG:3857)
   pub fn intersects(&self, bounds: &Polygon<f64>) -> Vec<ImageryFile> {
     let mut matching_files: Vec<ImageryFile> = Vec::new();
     for f in self.files.iter() {
@@ -216,31 +187,15 @@ impl ImageryRepository {
     };
     matching_files
   }
-}
 
-impl AsFeatureCollection for &Vec<RasterFile> {
-  /// converts a vec of RasterFiles into a FeatureCollection
-  fn as_feature_collection(self) -> FeatureCollection {
-    let mut fc = FeatureCollection {
-      bbox: None,
-      features: vec![],
-      foreign_members: None
-    };
-    for img in self {
-        let geometry = Geometry::from(&img.boundary);
-
-        let properties = img.properties.to_map();
-
-        let feat = Feature {
-            id: None,
-            bbox: None,
-            geometry: Some(geometry),
-            properties: Some(properties),
-            foreign_members: None
-        };
-        fc.features.push(feat);
-    };
-    fc
+  /// get an item by its ID.
+  pub fn get_item(&self, item_id: String) -> Option<&ImageryFile> {
+    for f in self.files.iter() {
+      if f.filename == item_id {
+        return Some(f)
+      }
+    }
+    None
   }
 }
 
@@ -254,12 +209,18 @@ impl AsFeatureCollection for &Vec<ImageryFile> {
     };
     for rast in self {
         let geometry = Geometry::from(&rast.boundary);
-
+        let bbox_rect = rast.boundary.bounding_rect().unwrap();
+        let bbox: Option<Vec<f64>> = Some(vec![
+          bbox_rect.min().x,
+          bbox_rect.min().y,
+          bbox_rect.max().x,
+          bbox_rect.max().y,
+        ]);
         let properties = rast.properties.to_map();
 
         let feat = Feature {
             id: None,
-            bbox: None,
+            bbox,
             geometry: Some(geometry),
             properties: Some(properties),
             foreign_members: None
@@ -267,6 +228,19 @@ impl AsFeatureCollection for &Vec<ImageryFile> {
         fc.features.push(feat);
     };
     fc
+  }
+}
+
+trait AsSTACCollections {
+  fn as_stac_collections_vec(&self, base_url: &url::Url) -> Vec<stac::Collection>;
+}
+
+impl AsSTACCollections for HashMap<String,ImageryCollection> {
+  fn as_stac_collections_vec(&self, base_url: &url::Url) -> Vec<stac::Collection> {
+    self.iter().map(|(_,v)| {
+      println!("base_url {:?}", &base_url);
+      v.stac_collection(base_url)
+    }).collect()
   }
 }
 
@@ -313,42 +287,39 @@ impl ImageryFileProperties {
   }
 }
 
-/// metadata about spectral images such as satellite imagery
+/// metadata about images
 #[derive(Debug, Clone)]
 pub struct ImageryFile {
-  filename: PathBuf,
+  path: PathBuf,
+  filename: String,
   pub boundary: Polygon<f64>,
   pub properties: ImageryFileProperties
 }
 
-#[derive(Debug, Clone)]
-pub struct RasterFileProperties {
-    pub filename: String,
-    pub crs: String,
-    pub resolution: Resolution,
-    pub num_bands: u16,
-    pub description: Option<String>
-  }
-
-impl RasterFileProperties {
-    pub fn to_map(&self) -> Map<String, Value> {
-        let mut properties = Map::new();
-        properties.insert(String::from("filename"), to_value(&self.filename).unwrap());
-        properties.insert(String::from("crs"), to_value(&self.crs).unwrap());
-        properties.insert(String::from("resolution"), to_value(&self.resolution).unwrap());
-        properties.insert(String::from("description"), to_value(&self.description).unwrap());
-        properties.insert(String::from("num_bands"), to_value(&self.num_bands).unwrap());
-        properties
+impl ImageryFile {
+    pub fn to_stac_item(&self) -> stac::Item {
+      let properties = stac::ItemProperties {
+        // todo: if datetime is required by STAC, make timestamp required on ImageryFile.
+        // this would help avoid unwrap().
+        datetime: self.properties.timestamp.unwrap(),
+        title: self.properties.filename.to_owned(),
+        description: self.properties.description.to_owned(),
+        created: None, // unimplemented
+        updated: None // unimplemented
+      };
+      let filename: String = self.filename.to_owned();
+      stac::Item {
+        item_type: stac::ItemType::Feature,
+        properties,
+        id: filename.to_owned(),
+        geometry: geojson::Geometry::from(&self.boundary),
+        bbox: Vec::new(), // unimplemented
+        links: Vec::new(),
+        assets: Vec::new(),
+        collection: None,
+        path: filename
+      }
     }
-}
-
-/// metadata about a raster data image.
-/// this is "thematic" data such as a DEM or a DEM-derived product.
-#[derive(Debug, Clone)]
-pub struct RasterFile {
-    pub filename: PathBuf,
-    pub boundary: Polygon<f64>,
-    pub properties: RasterFileProperties
 }
 
 /// get_resolution_from_geotransform uses a raster image's geotransform

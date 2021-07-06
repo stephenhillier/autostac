@@ -1,24 +1,26 @@
 #[macro_use] extern crate rocket;
+use std::collections::HashMap;
 use std::convert::TryInto;
 use std::f64;
 use std::u32;
 use std::u8;
-use geojson::{FeatureCollection};
 use geo_types::Polygon;
-use raster::AsFeatureCollection;
+use catalog::AsFeatureCollection;
 use serde_json::{to_string};
-use serde::{Serialize};
 use rocket::{State, response::content::Json};
 use wkt::Wkt;
 mod transform;
-mod raster;
+mod catalog;
 mod stac;
 
-
-#[get("/tiles/<z>/<x>/<y>")]
-fn tile(z: u8, x:u32, y:u32, coverage: &State<raster::Service>) -> String {
-    let bounds = transform::web_mercator_tile_bounds(z, x, y);
-    let files_for_tile = &coverage.inner().imagery.intersects(&bounds);
+/// returns a tile from a collection item covering the tile defined by its x/y/z address.
+fn _tile(collection_id: String, item_id: String, z: u8, x:u32, y:u32, coverage: &State<catalog::Service>) -> String {
+    let bounds = transform::to_bounds(x, y, z);
+    let collection = coverage.collections.get(&collection_id).unwrap();
+    
+    // currently this just returns files that could provide coverage for the tile.
+    // work in progress...
+    let files_for_tile = collection.intersects(&bounds);
 
     // stand-in for an actual tile
     format!("{} {} {} :\n {:?} :\n {:?}", z, x, y, bounds, files_for_tile)
@@ -27,106 +29,80 @@ fn tile(z: u8, x:u32, y:u32, coverage: &State<raster::Service>) -> String {
 /// returns a GeoJSON FeatureCollection representing available imagery that intersects
 /// with the polygon (in WKT format) provided by the `?intersects` query.
 /// example:  /api/v1/collections/imagery?intersects=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))
-#[get("/collections/imagery?<intersects>")]
-fn imagery_collection_intersecting_polygon(intersects: &str, coverage: &State<raster::Service>) -> Json<String> {
+fn _collection_items_intersecting_polygon(collection_id: String, intersects: &str, coverage: &State<catalog::Service>) -> Json<String> {
     let wkt_poly = Wkt::from_str(intersects).ok().unwrap();
     let bounds: Polygon<f64> = wkt_poly.try_into().unwrap();
-    let imagery = coverage.imagery.intersects(&bounds).as_feature_collection();
+    let collection = coverage.collections.get(&collection_id).unwrap();
+
+    let imagery = collection.intersects(&bounds).as_feature_collection();
     Json(to_string(&imagery).unwrap())
 }
 
-/// returns a GeoJSON FeatureCollection representing available raster data that intersects
-/// with the polygon (in WKT format) provided by the `?intersects` query.
-/// example:  /api/v1/collections/rasters?intersects=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))
-#[get("/collections/rasters?<intersects>")]
-fn rasters_collection_intersecting_polygon(intersects: &str, coverage: &State<raster::Service>) -> Json<String> {
-    let wkt_poly = Wkt::from_str(intersects).ok().unwrap();
-    let bounds: Polygon<f64> = wkt_poly.try_into().unwrap();
-    let rasters = coverage.rasters.intersects(&bounds).as_feature_collection();
-    Json(to_string(&rasters).unwrap())
+/// STAC API Item endpoint
+/// returns a GeoJSON Feature representing the item.
+/// https://github.com/radiantearth/stac-api-spec/blob/master/stac-spec/item-spec/README.md
+#[get("/collections/<collection_id>/<item_id>")]
+fn get_collection_item(collection_id: String, item_id: String, coverage: &State<catalog::Service>) -> Json<String> {
+    let collection = coverage.collections.get(&collection_id).unwrap();
+    let item = collection.get_item(item_id).unwrap();
+    Json(to_string(&item.to_stac_item()).unwrap())
 }
 
-/// returns a GeoJSON FeatureCollection representing available imagery
-#[get("/collections/imagery")]
-fn imagery_collection(coverage: &State<raster::Service>) -> Json<String> {
-    let imagery = coverage.imagery.all().as_feature_collection();
-    Json(to_string(&imagery).unwrap())
-}
-
-/// returns a GeoJSON FeatureCollection representing available imagery
-#[get("/collections/rasters")]
-fn raster_collection(coverage: &State<raster::Service>) -> Json<String> {
-    let rasters = coverage.rasters.all().as_feature_collection();
-    Json(to_string(&rasters).unwrap())
-}
-
-/// CollectionsResponse represents the response schema
-/// for a request to the collections endpoint.
-/// it contains FeatureCollections for available data categories
-#[derive(Debug, Serialize)]
-struct CollectionsResponse {
-    imagery: FeatureCollection,
-    rasters: FeatureCollection
-}
-
-/// returns a set of GeoJSON FeatureCollections representing
-/// data collections grouped into categories.
-/// So far only imagery (satellite imagery etc) is supported.
-/// TODO:  refactor collections into methods on their respective services.
-#[get("/collections")]
-fn collections(coverage: &State<raster::Service>) -> Json<String> {
-    let imagery = coverage.imagery.all().as_feature_collection();
-    let rasters = coverage.rasters.all().as_feature_collection();
-
-    let collection = CollectionsResponse {
-        imagery,
-        rasters
-    };
-    Json(to_string(&collection).unwrap())
+/// STAC API collections endpoint
+/// Returns a STAC Collection JSON representation of the collection with ID `collection_id`
+/// https://github.com/radiantearth/stac-api-spec/blob/master/stac-spec/collection-spec/README.md
+#[get("/collections/<collection_id>")]
+fn get_collection(collection_id: String, coverage: &State<catalog::Service>) -> Json<String> {
+    let collection = &coverage.collections.get(&collection_id)
+        .unwrap().stac_collection(&coverage.base_url);
+    Json(to_string(collection).unwrap())
 }
 
 /// STAC API landing page
 /// based on https://github.com/radiantearth/stac-api-spec/blob/master/overview.md#example-landing-page
 #[get("/")]
-fn landing() -> Json<String> {
-    // use hardcoded defaults for id, title, description, and base path while getting started.
-    // in the future, allow specifying these (cli args, or read from a file?).
-    let stac_landing = stac::LandingPage::new(
-        String::from("rs2"),
-        String::from("RS2 Demo"),
-        String::from("Demo for the rs2 remote sensing raster data service"),
-        String::from("https://example.org/")
-    );
-    Json(to_string(&stac_landing).unwrap())
+fn landing(coverage: &State<catalog::Service>) -> Json<String> {
+    Json(to_string(&coverage.stac_landing()).unwrap())
 }
 
 #[launch]
 fn rocket() -> _ {
-    // initialize raster coverage
-    let svc = raster::Service {
-        imagery: raster::ImageryRepository::new(),
-        rasters: raster::RasterRepository::new()
+
+    // create an imagery collection.
+    // this will collect file metadata in a directory.
+    // currently this is just a directory in the ./data relative dir.
+    let imagery = catalog::ImageryCollection::new(
+        String::from("imagery"),
+        String::from("RS2 Imagery"),
+        String::from("RS2 imagery file collection")
+    );
+
+    // the service supports multiple collections.  Add the collection created above as
+    // our first one.
+    let mut collections: HashMap<String, catalog::ImageryCollection> = HashMap::new();
+    collections.insert(imagery.id.to_owned(), imagery);
+
+    // initialize a service catalog with some info about our service.
+    // todo: these should be cli flags or read from a config file.
+    let svc = catalog::Service {
+        id: String::from("rs2"),
+        title: String::from("RS2 Demo"),
+        description: String::from("Demo for the rs2 remote sensing raster data service"),
+        base_url: url::Url::parse("http://localhost:8000").unwrap(),
+        collections
     };
 
     // start application
     rocket::build()
         .manage(svc)
-        // these API routes do not conform to STAC.
-        // routes are being converted and moved.
-        .mount("/api/v1", routes![
-            tile,
-            rasters_collection_intersecting_polygon,
-            imagery_collection_intersecting_polygon,
-            imagery_collection,
-            raster_collection,
-            collections,
-        ])
         // STAC conforming API.
         // routes are slowly being moved here.
         .mount(
             "/",
             routes![
-                landing
+            get_collection_item,
+            get_collection,    
+            landing
             ]
         )
 }
