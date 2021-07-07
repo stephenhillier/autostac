@@ -1,4 +1,4 @@
-use chrono::{DateTime, FixedOffset};
+use chrono::{DateTime, Utc};
 use serde::{Serialize};
 use serde_json::{Map, Value, to_value};
 
@@ -137,9 +137,9 @@ impl LandingPage {
 pub struct ItemProperties {
   pub title: String,
   pub description: Option<String>,
-  pub datetime: DateTime<FixedOffset>,
-  pub created: Option<DateTime<FixedOffset>>,
-  pub updated: Option<DateTime<FixedOffset>>,
+  pub datetime: DateTime<Utc>,
+  pub created: Option<DateTime<Utc>>,
+  pub updated: Option<DateTime<Utc>>,
 
   // non-standard properties
   pub spatial_resolution: Option<f64>
@@ -214,7 +214,6 @@ impl Collection {
       let collection_url = base_url
         .join("collections/").unwrap()
         .join(&(self.id.to_owned() + "/")).unwrap();
-      println!("{}", collection_url.to_string());
       StacLink { rel: StacRel::Child,
         href: collection_url.to_string(),
         media_type: String::from("application/json")

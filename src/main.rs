@@ -28,7 +28,7 @@ fn _tile(collection_id: String, z: u8, x:u32, y:u32, coverage: &State<catalog::S
 
 /// returns a GeoJSON FeatureCollection representing available imagery that intersects
 /// with the polygon (in WKT format) provided by the `?intersects` query.
-/// example:  /api/v1/collections/imagery?intersects=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))
+/// example:  /collections/imagery?intersects=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))
 #[get("/collections/<collection_id>?<intersects>")]
 fn collection_items_intersecting_polygon(collection_id: String, intersects: &str, coverage: &State<catalog::Service>) -> Json<String> {
     let wkt_geom = Wkt::from_str(intersects).ok().unwrap();
@@ -69,19 +69,17 @@ fn landing(coverage: &State<catalog::Service>) -> Json<String> {
 #[launch]
 fn rocket() -> _ {
 
-    // create an imagery collection.
-    // this will collect file metadata in a directory.
-    // currently this is just a directory in the ./data relative dir.
-    let imagery = catalog::ImageryCollection::new(
-        String::from("imagery"),
-        String::from("RS2 Imagery"),
-        String::from("RS2 imagery file collection")
-    );
+    // for now, start with searching in the ./data dir.
+    // subdirectories (one level deep) will be scanned to create collections.
+    // imagery in subdirectories will be catalogued.
+    // e.g. the subdirectories:
+    //     ./data/imagery
+    //     ./data/landuse
+    // will create two collections "imagery" and "landuse".  These collections will be
+    // populated by the files within their respective directories.
+    let dir: &str = "./data";
 
-    // the service supports multiple collections.  Add the collection created above as
-    // our first one.
-    let mut collections: HashMap<String, catalog::ImageryCollection> = HashMap::new();
-    collections.insert(imagery.id.to_owned(), imagery);
+    let collections: HashMap<String, catalog::ImageryCollection> = catalog::collections_from_subdirs("./data");
 
     // initialize a service catalog with some info about our service.
     // todo: these should be cli flags or read from a config file.

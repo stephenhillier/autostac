@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 use std::f64;
+use std::hash::Hash;
 use std::path::PathBuf;
 use std::fs;
-use chrono::DateTime;
-use chrono::offset::FixedOffset;
+use chrono::{DateTime, Utc};
 use geo::polygon;
 use geo::algorithm::intersects::Intersects;
 use geo::algorithm::contains::Contains;
@@ -68,8 +68,8 @@ pub struct ImageryCollection {
 impl ImageryCollection {
   /// Create a new ImageryCollection, populated with files found by
   /// collect_files.
-  pub fn new(id: String, title: String, description: String) -> ImageryCollection {
-    let files = ImageryCollection::collect_files();
+  pub fn new(id: String, title: String, description: String, dir: PathBuf) -> ImageryCollection {
+    let files = ImageryCollection::collect_files(dir, id.to_owned());
     ImageryCollection{
       id,
       title,
@@ -81,67 +81,79 @@ impl ImageryCollection {
   /// register_images searches the imagery directory and collects
   /// metadata about valid images.  Images are valid if they can be
   /// opened by GDAL.
-  fn collect_files() -> Vec<ImageryFile> {
-    // just a hardcoded dir path for now.  Put satellite imagery (e.g. Sentinel-2)
-    // into this folder.
-    let img_dir = fs::read_dir("./data/imagery/").unwrap();
+  fn collect_files(dir: PathBuf, collection_id: String) -> Vec<ImageryFile> {
+    let img_dir = fs::read_dir(dir).unwrap();
 
     let mut coverage: Vec<ImageryFile> = Vec::new();
 
     // iterate through the files in img_dir and capture information
     for file in img_dir {
       let file = file.unwrap();
-        let path = file.path();
-        let filename = file.path().as_path().file_stem().unwrap().to_str().unwrap().to_owned();
-        println!("{}", filename);
+      let path = file.path();
 
-        // open the dataset using GDAL.
-        let dataset = Dataset::open(&path).unwrap();
-        let poly = get_extent(&dataset);
-        let crs = dataset.projection();
-        let num_bands = dataset.raster_count() as u16;
-        
-        // Check metadata for cloud coverage
-        // this is the metadata key for Sentinel-2 imagery.
-        // todo: confirm key for other sources.
-        let cloud_coverage: Option<f64> = dataset
-            .metadata_item("CLOUD_COVERAGE_ASSESSMENT", "")
-            .map(|s| s.parse::<f64>().unwrap());
+      // skip if not a file.
+      if !path.is_file() {
+        continue;
+      }
 
-        // Check metadata for timestamp. "PRODUCT_START_TIME" is used, but
-        // need to confirm whether this is the most appropriate timestamp.
-        let timestamp: Option<DateTime<FixedOffset>> = dataset
-            .metadata_item("PRODUCT_START_TIME", "")
-            .map(|s| DateTime::parse_from_rfc3339(&s).unwrap());
+      let filename = file.path().as_path().file_stem().unwrap().to_str().unwrap().to_owned();
+      println!("processing {}", path.as_path().display().to_string());
 
+      // open the dataset using GDAL.
+      let dataset = match Dataset::open(&path) {
+        Ok(ds) => ds,
+        Err(_) => continue,
+      };
 
-        // capture the IMAGEDESCRIPTION tag.
-        let description: Option<String> = dataset
-            .metadata_item("TIFFTAG_IMAGEDESCRIPTION", "");
+      let poly = get_extent(&dataset);
+      let crs = dataset.projection();
+      let num_bands = dataset.raster_count() as u16;
+      
+      // Check metadata for cloud coverage
+      // this is the metadata key for Sentinel-2 imagery.
+      // todo: confirm key for other sources.
+      let cloud_coverage: Option<f64> = dataset
+          .metadata_item("CLOUD_COVERAGE_ASSESSMENT", "")
+          .map(|s| s.parse::<f64>().unwrap());
 
-        // convert extent polygon into lat/long
-        let boundary: Polygon<f64> = transform::transform_polygon(&poly, &crs, "EPSG:4326");
-
-        // add the file information to the coverage vector.
-        let properties = ImageryFileProperties {
-            filename: path.as_path().display().to_string(),
-            crs,
-            resolution: get_resolution_from_geotransform(&dataset.geo_transform().unwrap()),
-            description,
-            num_bands,
-            cloud_coverage,
-            timestamp,
-            red_band: None, // unimplemented
-            ni_band: None  // unimplemented
+      // Check metadata for timestamp. "PRODUCT_START_TIME" is used, but
+      // need to confirm whether this is the most appropriate timestamp.
+      let timestamp: DateTime<Utc> = match dataset
+          .metadata_item("PRODUCT_START_TIME", "")
+          .map(|s| DateTime::parse_from_rfc3339(&s).unwrap().with_timezone(&Utc)) {
+            Some(ts) => ts,
+            None => Utc::now(),
         };
 
-        let file = ImageryFile{
-            path,
-            filename,
-            boundary,
-            properties
-        };
-        coverage.push(file);
+
+      // capture the IMAGEDESCRIPTION tag.
+      let description: Option<String> = dataset
+          .metadata_item("TIFFTAG_IMAGEDESCRIPTION", "");
+
+      // convert extent polygon into lat/long
+      let boundary: Polygon<f64> = transform::transform_polygon(&poly, &crs, "EPSG:4326");
+
+      // add the file information to the coverage vector.
+      let properties = ImageryFileProperties {
+          filename: path.as_path().display().to_string(),
+          crs,
+          resolution: get_resolution_from_geotransform(&dataset.geo_transform().unwrap()),
+          description,
+          num_bands,
+          cloud_coverage,
+          timestamp,
+          red_band: None, // unimplemented
+          ni_band: None  // unimplemented
+      };
+
+      let file = ImageryFile{
+          path,
+          filename,
+          boundary,
+          properties,
+          collection_id: collection_id.to_owned()
+      };
+      coverage.push(file);
     }
     coverage
   }
@@ -233,7 +245,6 @@ trait AsSTACCollections {
 impl AsSTACCollections for HashMap<String,ImageryCollection> {
   fn as_stac_collections_vec(&self, base_url: &url::Url) -> Vec<stac::Collection> {
     self.iter().map(|(_,v)| {
-      println!("base_url {:?}", &base_url);
       v.stac_collection(base_url)
     }).collect()
   }
@@ -264,7 +275,7 @@ pub struct ImageryFileProperties {
   pub num_bands: u16,
   pub description: Option<String>,
   pub cloud_coverage: Option<f64>,
-  pub timestamp: Option<DateTime<FixedOffset>>,
+  pub timestamp: DateTime<Utc>,
   pub red_band: Option<u16>,
   pub ni_band: Option<u16>
 }
@@ -275,17 +286,16 @@ pub struct ImageryFile {
   path: PathBuf,
   filename: String,
   pub boundary: Polygon<f64>,
-  pub properties: ImageryFileProperties
+  pub properties: ImageryFileProperties,
+  collection_id: String
 }
 
 impl ImageryFile {
     /// create a STAC ItemProperties object out of the ImageryFile's properties.
     pub fn stac_properties(&self) -> stac::ItemProperties {
       stac::ItemProperties {
-        // todo: if datetime is required by STAC, make timestamp required on ImageryFile.
-        // this would help avoid unwrap().
-        datetime: self.properties.timestamp.unwrap(),
-        title: self.properties.filename.to_owned(),
+        datetime: self.properties.timestamp,
+        title: self.filename.to_owned(),
         description: self.properties.description.to_owned(),
         created: None, // unimplemented
         updated: None, // unimplemented
@@ -308,10 +318,10 @@ impl ImageryFile {
         let mut foreign_members = Map::new();
         foreign_members.insert(String::from("links"), serde_json::Value::Array(Vec::new()));
         foreign_members.insert(String::from("assets"), serde_json::Value::Array(Vec::new()));
-        foreign_members.insert(String::from("collection"), serde_json::Value::String(String::from("")));
+        foreign_members.insert(String::from("collection"), serde_json::Value::String(self.collection_id.to_owned()));
 
         Feature {
-            id: Some(geojson::feature::Id::String(self.properties.filename.to_owned())),
+            id: Some(geojson::feature::Id::String(self.filename.to_owned())),
             bbox,
             geometry: Some(geometry),
             properties: Some(properties.to_map()),
@@ -346,4 +356,38 @@ fn get_extent(dataset: &Dataset) -> Polygon<f64> {
       (x: xmax, y: ymax),
       (x: xmin, y: ymax)
   ]
+}
+
+/// looks for folders within `dir` and creates collections out of them.
+/// currently, this means that you should create a data directory that
+/// itself contains one or more folders that represent collections.
+/// e.g. the following 3 folders under the ./data dir:
+///   ./data/imagery
+///   ./data/dem
+///   ./data/sentinel2
+/// would create collections "imagery", "dem", and "sentinel2".
+pub fn collections_from_subdirs(dir: &str) -> HashMap<String, ImageryCollection> {
+  let mut collections: HashMap<String, ImageryCollection> = HashMap::new();
+  let data_dir = fs::read_dir(dir).unwrap();
+
+  for entry in data_dir {
+    let file = entry.unwrap();
+    let path = file.path();
+
+    // skip if not a file.
+    if !path.is_dir() {
+      continue;
+    }
+
+    let dirname = file.path().as_path().file_stem().unwrap().to_str().unwrap().to_owned();
+
+    let c = ImageryCollection::new(
+      dirname.to_owned(),
+      dirname.to_owned(),
+      dirname.to_owned(),
+      path
+    );
+    collections.insert(dirname, c);
+  }
+  collections
 }
