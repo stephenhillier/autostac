@@ -4,7 +4,7 @@ use std::convert::TryInto;
 use std::f64;
 use std::u32;
 use std::u8;
-use geo_types::Polygon;
+use geo_types::Geometry;
 use catalog::AsFeatureCollection;
 use serde_json::{to_string};
 use rocket::{State, response::content::Json};
@@ -14,8 +14,8 @@ mod catalog;
 mod stac;
 
 /// returns a tile from a collection item covering the tile defined by its x/y/z address.
-fn _tile(collection_id: String, item_id: String, z: u8, x:u32, y:u32, coverage: &State<catalog::Service>) -> String {
-    let bounds = transform::to_bounds(x, y, z);
+fn _tile(collection_id: String, z: u8, x:u32, y:u32, coverage: &State<catalog::Service>) -> String {
+    let bounds: Geometry<f64> = transform::to_bounds(x, y, z).try_into().unwrap();
     let collection = coverage.collections.get(&collection_id).unwrap();
     
     // currently this just returns files that could provide coverage for the tile.
@@ -29,9 +29,10 @@ fn _tile(collection_id: String, item_id: String, z: u8, x:u32, y:u32, coverage: 
 /// returns a GeoJSON FeatureCollection representing available imagery that intersects
 /// with the polygon (in WKT format) provided by the `?intersects` query.
 /// example:  /api/v1/collections/imagery?intersects=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))
-fn _collection_items_intersecting_polygon(collection_id: String, intersects: &str, coverage: &State<catalog::Service>) -> Json<String> {
-    let wkt_poly = Wkt::from_str(intersects).ok().unwrap();
-    let bounds: Polygon<f64> = wkt_poly.try_into().unwrap();
+#[get("/collections/<collection_id>?<intersects>")]
+fn collection_items_intersecting_polygon(collection_id: String, intersects: &str, coverage: &State<catalog::Service>) -> Json<String> {
+    let wkt_geom = Wkt::from_str(intersects).ok().unwrap();
+    let bounds: Geometry<f64> = wkt_geom.try_into().unwrap();
     let collection = coverage.collections.get(&collection_id).unwrap();
 
     let imagery = collection.intersects(&bounds).as_feature_collection();
@@ -45,7 +46,7 @@ fn _collection_items_intersecting_polygon(collection_id: String, intersects: &st
 fn get_collection_item(collection_id: String, item_id: String, coverage: &State<catalog::Service>) -> Json<String> {
     let collection = coverage.collections.get(&collection_id).unwrap();
     let item = collection.get_item(item_id).unwrap();
-    Json(to_string(&item.to_stac_item()).unwrap())
+    Json(to_string(&item.to_stac_feature()).unwrap())
 }
 
 /// STAC API collections endpoint
@@ -100,6 +101,7 @@ fn rocket() -> _ {
         .mount(
             "/",
             routes![
+            collection_items_intersecting_polygon,
             get_collection_item,
             get_collection,    
             landing

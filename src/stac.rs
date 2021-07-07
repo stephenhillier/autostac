@@ -1,8 +1,6 @@
 use chrono::{DateTime, FixedOffset};
 use serde::{Serialize};
-use geojson;
-use url;
-use crate::catalog;
+use serde_json::{Map, Value, to_value};
 
 /// this STAC implementation was written against the v1.0.0-beta2 version of the
 /// STAC spec.
@@ -21,8 +19,8 @@ pub enum StacRel {
   SelfRel,
   /// The root, or landing page, of the STAC API. 
   Root,
-  ServiceDesc,
-  ServiceDoc,
+  _ServiceDesc,
+  _ServiceDoc,
   Parent,
   Child,
   Item
@@ -31,7 +29,7 @@ pub enum StacRel {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ItemType {
-  Feature
+  _Feature
 }
 
 #[derive(Debug, Serialize)]
@@ -40,6 +38,10 @@ pub enum CollectionType {
   Collection
 }
 
+
+pub trait ToStacLink {
+  fn to_stac_link(&self, collection_url: &url::Url) -> StacLink;
+}
 
 /// StacLink objects are used in the `links` field list of STAC endpoints.
 #[derive(Debug, Serialize)]
@@ -52,6 +54,21 @@ pub struct StacLink {
   pub media_type: String,
   /// A hyperlink
   pub href: String
+}
+
+impl ToStacLink for geojson::Feature {
+  fn to_stac_link(&self, collection_url: &url::Url) -> StacLink {
+    let id: String = match self.id.as_ref().unwrap() {
+        geojson::feature::Id::String(s) => s.to_string(),
+        geojson::feature::Id::Number(n) => n.to_string(),
+    };
+
+    StacLink {
+      rel: StacRel::Item,
+      media_type: String::from("application/geo+json"),
+      href: collection_url.join(&id).unwrap().to_string()
+    }
+  }
 }
 
 /// A STAC landing page.
@@ -72,8 +89,9 @@ impl LandingPage {
       // form the "conforms_to" field.
       // this will have to be updated soon to allow new definitions that the service
       // conforms to.  For now, add the "core" definition (v1.0.0-beta.2).
-      let mut conforms_to: Vec<String> = Vec::new();
-      conforms_to.push(String::from(STAC_CORE_DEF));
+      let conforms_to: Vec<String> = vec![
+        String::from(STAC_CORE_DEF)
+      ];
 
       // Add root and self links to a list of links.
       // again, this will have to support collection links.
@@ -122,6 +140,25 @@ pub struct ItemProperties {
   pub datetime: DateTime<FixedOffset>,
   pub created: Option<DateTime<FixedOffset>>,
   pub updated: Option<DateTime<FixedOffset>>,
+
+  // non-standard properties
+  pub spatial_resolution: Option<f64>
+}
+
+impl ItemProperties {
+    pub fn to_map(&self) -> Map<String, Value> {
+      let mut properties = Map::new();
+
+      // This is a silly way to create a properties map...
+      // Find a better way to convert to a format that fits in Feature.properties
+      properties.insert(String::from("title"), to_value(&self.title).unwrap());
+      properties.insert(String::from("description"), to_value(&self.description).unwrap());
+      properties.insert(String::from("datetime"), to_value(&self.datetime).unwrap());
+      properties.insert(String::from("created"), to_value(&self.created).unwrap());
+      properties.insert(String::from("updated"), to_value(&self.updated).unwrap());
+      properties.insert(String::from("spatial_resolution"), to_value(&self.spatial_resolution).unwrap());
+      properties
+    }
 }
 
 /// A STAC Item.
@@ -139,26 +176,6 @@ pub struct Item {
   pub collection: Option<String>,
   #[serde(skip)]
   pub path: String
-}
-
-impl Item {
-    /// create an item link by combining `collection_url` and the item's ID.
-    pub fn item_link(&self, collection_url: &url::Url) -> StacLink {
-      StacLink {
-        rel: StacRel::Item,
-        media_type: String::from("application/geo+json"),
-        href: collection_url.join(&(self.id.to_owned())).unwrap().to_string()
-      }
-    }
-
-    /// create a link back to this item's collection, with a ref of parent
-    pub fn parent_link(&self, collection_url: &url::Url) -> StacLink {
-      StacLink {
-        rel: StacRel::Parent,
-        media_type: String::from("application/geo+json"),
-        href: collection_url.to_string()
-      }
-    }
 }
 
 /// A STAC Collection.
@@ -185,7 +202,7 @@ impl Collection {
       Collection {
         collection_type: CollectionType::Collection,
         stac_version: String::from(STAC_VERSION),
-        id: id.to_owned(),
+        id,
         title,
         description,
         links

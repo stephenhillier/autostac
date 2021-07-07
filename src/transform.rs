@@ -3,7 +3,6 @@ use geo::algorithm::map_coords::MapCoords;
 use geo::polygon;
 use proj::Proj;
 use geo_types::{Polygon,Coordinate};
-use tile_grid::Grid;
 
 pub fn transform_polygon(poly: &Polygon<f64>, from_crs: &str, to_crs: &str) -> Polygon<f64> {
   let func = Proj::new_known_crs(from_crs, to_crs, None).unwrap();
@@ -18,7 +17,7 @@ fn to_lng_lat(x:u32, y:u32, z: u8) -> Coordinate<f64> {
     let lon = x as f64 / n * 360.0 - 180.0;
     let lat_rad = (PI * (1_f64 - 2_f64 * y as f64 / n)).sinh().atan();
     let lat = lat_rad * 180_f64 / PI;
-    return Coordinate{x: lon, y: lat}
+    Coordinate{x: lon, y: lat}
 }
 
 /// to_bounds returns the lat/lng tile boundaries as a geo_types::Polygon<f64>

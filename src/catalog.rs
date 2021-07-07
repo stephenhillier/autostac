@@ -6,16 +6,18 @@ use chrono::DateTime;
 use chrono::offset::FixedOffset;
 use geo::polygon;
 use geo::algorithm::intersects::Intersects;
+use geo::algorithm::contains::Contains;
 use gdal::{Dataset, Metadata};
 use geo::prelude::BoundingRect;
 use geojson::Feature;
 use geojson::FeatureCollection;
-use geojson::Geometry;
-use geo_types::Polygon;
-use serde_json::{Map, Value, to_value};
+use geojson;
+use geo_types::{Polygon, Geometry};
+use serde_json::{Map};
 use serde::{Serialize};
 use url;
 use crate::stac;
+use crate::stac::ToStacLink;
 use crate::transform;
 
 /// Service represents the raster imagery service.
@@ -113,9 +115,7 @@ impl ImageryCollection {
             .map(|s| DateTime::parse_from_rfc3339(&s).unwrap());
 
 
-        // capture the IMAGEDESCRIPTION tag. We can allow users to
-        // set this tag as a basic way to group images. e.g. "DEM",
-        // "Stream_Burned_DEM". The tag value is up to the user.
+        // capture the IMAGEDESCRIPTION tag.
         let description: Option<String> = dataset
             .metadata_item("TIFFTAG_IMAGEDESCRIPTION", "");
 
@@ -165,8 +165,8 @@ impl ImageryCollection {
     collection.links.push(collection.self_link(base_url));
 
     for f in self.all() {
-      let item = f.to_stac_item();
-      collection.links.push(item.item_link(&collection_url));
+      let item = f.to_stac_feature();
+      collection.links.push(item.to_stac_link(&collection_url));
     }
 
     collection
@@ -177,11 +177,23 @@ impl ImageryCollection {
     &self.files
   }
 
-  /// Returns files in ImageryCollection that intersect with bounds (EPSG:3857)
-  pub fn intersects(&self, bounds: &Polygon<f64>) -> Vec<ImageryFile> {
+  /// Returns files in ImageryCollection that intersect with geom (lat/lng / EPSG:4326)
+  pub fn intersects(&self, geom: &Geometry<f64>) -> Vec<ImageryFile> {
     let mut matching_files: Vec<ImageryFile> = Vec::new();
     for f in self.files.iter() {
-        if f.boundary.intersects(bounds) {
+        if f.boundary.intersects(geom) {
+            matching_files.push(f.to_owned());
+        }
+    };
+    matching_files
+  }
+
+  /// returns files in ImageryCollection whose extent contains geom (geom should use lat/lng)
+  /// todo: make more generic
+  pub fn _contains(&self, geom: &Polygon<f64>) -> Vec<ImageryFile> {
+    let mut matching_files: Vec<ImageryFile> = Vec::new();
+    for f in self.files.iter() {
+        if f.boundary.contains(geom) {
             matching_files.push(f.to_owned());
         }
     };
@@ -208,24 +220,7 @@ impl AsFeatureCollection for &Vec<ImageryFile> {
       foreign_members: None
     };
     for rast in self {
-        let geometry = Geometry::from(&rast.boundary);
-        let bbox_rect = rast.boundary.bounding_rect().unwrap();
-        let bbox: Option<Vec<f64>> = Some(vec![
-          bbox_rect.min().x,
-          bbox_rect.min().y,
-          bbox_rect.max().x,
-          bbox_rect.max().y,
-        ]);
-        let properties = rast.properties.to_map();
-
-        let feat = Feature {
-            id: None,
-            bbox,
-            geometry: Some(geometry),
-            properties: Some(properties),
-            foreign_members: None
-        };
-        fc.features.push(feat);
+        fc.features.push(rast.to_stac_feature());
     };
     fc
   }
@@ -253,6 +248,14 @@ pub struct Resolution {
     pub x: f64
 }
 
+impl Resolution {
+    // returns the simple average of the calculated x and y resolution.
+    // todo: should this be diagonal resolution?
+    pub fn avg(&self) -> f64 {
+      (self.x + self.y) / 2.
+    }
+}
+
 #[derive(Debug,Clone)]
 pub struct ImageryFileProperties {
   pub filename: String,
@@ -266,27 +269,6 @@ pub struct ImageryFileProperties {
   pub ni_band: Option<u16>
 }
 
-impl ImageryFileProperties {
-  /// Converts ImageryFileProperties to a serde_json::Map so
-  /// that it can be used as the properties object in a GeoJSON Feature 
-  pub fn to_map(&self) -> Map<String, Value> {
-      let mut properties = Map::new();
-
-      // This is a silly way to create a properties map...
-      // Find a better way to convert to a format that fits in Feature.properties
-      properties.insert(String::from("filename"), to_value(&self.filename).unwrap());
-      properties.insert(String::from("crs"), to_value(&self.crs).unwrap());
-      properties.insert(String::from("resolution"), to_value(&self.resolution).unwrap());
-      properties.insert(String::from("num_bands"), to_value(&self.num_bands).unwrap());
-      properties.insert(String::from("cloud_coverage"), to_value(&self.cloud_coverage).unwrap());
-      properties.insert(String::from("timestamp"), to_value(&self.timestamp).unwrap());
-      properties.insert(String::from("red_band"), to_value(&self.red_band).unwrap());
-      properties.insert(String::from("ni_band"), to_value(&self.ni_band).unwrap());
-      properties.insert(String::from("description"), to_value(&self.description).unwrap());
-      properties
-  }
-}
-
 /// metadata about images
 #[derive(Debug, Clone)]
 pub struct ImageryFile {
@@ -297,28 +279,44 @@ pub struct ImageryFile {
 }
 
 impl ImageryFile {
-    pub fn to_stac_item(&self) -> stac::Item {
-      let properties = stac::ItemProperties {
+    /// create a STAC ItemProperties object out of the ImageryFile's properties.
+    pub fn stac_properties(&self) -> stac::ItemProperties {
+      stac::ItemProperties {
         // todo: if datetime is required by STAC, make timestamp required on ImageryFile.
         // this would help avoid unwrap().
         datetime: self.properties.timestamp.unwrap(),
         title: self.properties.filename.to_owned(),
         description: self.properties.description.to_owned(),
         created: None, // unimplemented
-        updated: None // unimplemented
-      };
-      let filename: String = self.filename.to_owned();
-      stac::Item {
-        item_type: stac::ItemType::Feature,
-        properties,
-        id: filename.to_owned(),
-        geometry: geojson::Geometry::from(&self.boundary),
-        bbox: Vec::new(), // unimplemented
-        links: Vec::new(),
-        assets: Vec::new(),
-        collection: None,
-        path: filename
+        updated: None, // unimplemented
+        spatial_resolution: Some(self.properties.resolution.avg())
       }
+    }
+
+    /// a GeoJSON Feature with all the fields of a STAC Item 
+    pub fn to_stac_feature(&self) -> geojson::Feature {
+        let geometry = geojson::Geometry::from(&self.boundary);
+        let bbox_rect = self.boundary.bounding_rect().unwrap();
+        let bbox: Option<Vec<f64>> = Some(vec![
+          bbox_rect.min().x,
+          bbox_rect.min().y,
+          bbox_rect.max().x,
+          bbox_rect.max().y,
+        ]);
+        let properties = self.stac_properties();
+
+        let mut foreign_members = Map::new();
+        foreign_members.insert(String::from("links"), serde_json::Value::Array(Vec::new()));
+        foreign_members.insert(String::from("assets"), serde_json::Value::Array(Vec::new()));
+        foreign_members.insert(String::from("collection"), serde_json::Value::String(String::from("")));
+
+        Feature {
+            id: Some(geojson::feature::Id::String(self.properties.filename.to_owned())),
+            bbox,
+            geometry: Some(geometry),
+            properties: Some(properties.to_map()),
+            foreign_members: Some(foreign_members)
+        }
     }
 }
 
@@ -336,6 +334,10 @@ fn get_resolution_from_geotransform(geotransform: &[f64]) -> Resolution {
 fn get_extent(dataset: &Dataset) -> Polygon<f64> {
   let [xmin, x_size, _, ymin, _, y_size] = dataset.geo_transform().unwrap();
   let (width, height) = dataset.raster_size();
+
+  // this calculation tosses out skew, but incorporating the pixel widths from
+  // get_resolution_from_geotransform (which include skew) seems to return incorrect results.
+  // TODO: get a test for both functions asap.
   let xmax = xmin + width as f64 * x_size;
   let ymax = ymin + height as f64 * y_size;
   polygon![
