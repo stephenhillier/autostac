@@ -17,8 +17,11 @@ itertools = "0.10.1"
 proj = { version = "0.22.0", features=["geo-types"] }
 rayon = "1.5.1"
 rocket = "0.5.0-rc.1"
+rust-s3 = "0.26.4"
 serde = "1.0.126"
 serde_json = "1.0.64"
+structopt = "0.3.22"
+structopt-toml = "0.4.5"
 tile-grid = "0.3.0"
 url = "2.2.2"
 wkt = { version = "0.9.2", features = ["geo-types"] }

@@ -7,12 +7,53 @@ use std::u8;
 use geo_types::Geometry;
 use catalog::AsFeatureCollection;
 use serde_json::{to_string};
+use serde::Deserialize;
+use structopt::StructOpt;
+use structopt_toml::StructOptToml;
 use rocket::{State, response::content::Json};
 use rocket::response::status::BadRequest;
 use wkt::Wkt;
 mod transform;
 mod catalog;
 mod stac;
+
+
+#[derive(Debug, Deserialize, StructOpt, StructOptToml)]
+#[serde(default)]
+struct Opt {
+    /// Directory to catalog.
+    ///
+    /// Subdirectories (one level deep) will be scanned to create collections.
+    /// Imagery in subdirectories will be catalogued.
+    /// 
+    /// e.g. the subdirectories:
+    ///
+    ///     ./data/imagery
+    ///     ./data/landuse
+    ///
+    /// will create two collections "imagery" and "landuse".  These collections will be
+    /// populated by the files within their respective directories.
+    #[structopt(default_value = "./data", long, short = "d", env = "RS2_CATALOG_DIR", required_unless="s3_host")]
+    dir: String,
+
+    /// S3 host to use.
+    #[structopt(long, env = "S3_HOST", requires="s3_bucket")]
+    s3_host: Option<String>,
+
+    /// S3 bucket to use as the root of the catalog.
+    ///
+    /// Collections will be built based on prefixes.
+    #[structopt(long, env = "S3_BUCKET")]
+    s3_bucket: Option<String>,
+
+    /// S3 access key
+    #[structopt(long, env = "S3_ACCESS_KEY")]
+    s3_access_key: Option<String>,
+
+    /// S3 secret key
+    #[structopt(long, env = "S3_SECRET_KEY")]
+    s3_secret_key: Option<String>
+}
 
 /// returns a tile from a collection item covering the tile defined by its x/y/z address.
 fn _tile(collection_id: String, z: u8, x:u32, y:u32, coverage: &State<catalog::Service>) -> String {
@@ -108,20 +149,23 @@ fn landing(coverage: &State<catalog::Service>) -> Json<String> {
     Json(to_string(&coverage.stac_landing()).unwrap())
 }
 
-#[launch]
-fn rocket() -> _ {
+#[rocket::main]
+async fn main() {
 
-    // for now, start with searching in the ./data dir.
-    // subdirectories (one level deep) will be scanned to create collections.
-    // imagery in subdirectories will be catalogued.
-    // e.g. the subdirectories:
-    //     ./data/imagery
-    //     ./data/landuse
-    // will create two collections "imagery" and "landuse".  These collections will be
-    // populated by the files within their respective directories.
-    let dir: &str = "./data";
+    let opt = Opt::from_args();
+    let collections: HashMap<String, catalog::ImageryCollection>;
 
-    let collections: HashMap<String, catalog::ImageryCollection> = catalog::collections_from_subdirs(dir);
+    // if s3_host was supplied, create collections from S3.
+    if opt.s3_host.is_some() {
+        collections = catalog::collections_from_s3(
+            &opt.s3_host.unwrap(),
+            &opt.s3_bucket.unwrap(),
+            &opt.s3_access_key.unwrap(),  // this shouldn't be required. todo: make it an Option.
+            &opt.s3_secret_key.unwrap()   // ^
+        );
+    } else {
+        collections = catalog::collections_from_subdirs(&opt.dir);
+    }
 
     // initialize a service catalog with some info about our service.
     // todo: these should be cli flags or read from a config file.
@@ -134,7 +178,7 @@ fn rocket() -> _ {
     };
 
     // start application
-    rocket::build()
+    let _app = rocket::build()
         .manage(svc)
         // STAC conforming API.
         // routes are slowly being moved here.
@@ -146,5 +190,5 @@ fn rocket() -> _ {
             get_collection,    
             landing
             ]
-        )
+        ).launch().await;
 }

@@ -13,6 +13,7 @@ use geojson::Feature;
 use geojson::FeatureCollection;
 use geojson;
 use geo_types::{Polygon, Geometry};
+use s3;
 use serde_json::{Map};
 use serde::{Serialize};
 use url;
@@ -68,7 +69,7 @@ pub struct ImageryCollection {
 impl ImageryCollection {
   /// Create a new ImageryCollection, populated with files found by
   /// collect_files.
-  pub fn new(id: String, title: String, description: String, dir: PathBuf) -> ImageryCollection {
+  pub fn new_from_dir(id: String, title: String, description: String, dir: PathBuf) -> ImageryCollection {
     let files = ImageryCollection::collect_files(dir, id.to_owned());
     ImageryCollection{
       id,
@@ -156,6 +157,15 @@ impl ImageryCollection {
       coverage.push(file);
     }
     coverage
+  }
+
+  pub fn new_from_s3(
+    id: String,
+    title: String,
+    description: String,
+    s3: &Storage
+  ) -> ImageryCollection {
+    unimplemented!();
   }
 
   pub fn stac_collection(
@@ -379,9 +389,10 @@ pub fn collections_from_subdirs(dir: &str) -> HashMap<String, ImageryCollection>
       continue;
     }
 
+    // yikes
     let dirname = file.path().as_path().file_stem().unwrap().to_str().unwrap().to_owned();
 
-    let c = ImageryCollection::new(
+    let c = ImageryCollection::new_from_dir(
       dirname.to_owned(),
       dirname.to_owned(),
       dirname.to_owned(),
@@ -389,5 +400,50 @@ pub fn collections_from_subdirs(dir: &str) -> HashMap<String, ImageryCollection>
     );
     collections.insert(dirname, c);
   }
+  collections
+}
+
+/* S3 integration */
+
+/// represents an S3 storage backend
+pub struct Storage {
+  name: String,
+  region: s3::Region,
+  credentials: s3::creds::Credentials,
+  bucket: String,
+  location_supported: bool,
+}
+
+/// Creates collections from an S3 bucket.
+/// Collections are created from object prefixes.
+/// For now, objects need to have a prefix to get put into a collection, e.g.:
+/// mybucket/imagery/img1.tif will put img1.tif into an `imagery` collection.
+pub fn collections_from_s3(
+  s3_host: &str,
+  s3_bucket: &str,
+  s3_access_key: &str,
+  s3_secret_key: &str
+) -> HashMap<String, ImageryCollection> {
+  let mut collections: HashMap<String, ImageryCollection> = HashMap::new();
+
+
+  let s3 = Storage {
+      name: "s3".into(),
+      region: s3::Region::Custom {
+          region: "us-east-1".into(),
+          endpoint: s3_host.into(),
+      },
+      credentials: s3::creds::Credentials::new(
+        Some(s3_access_key),
+        Some(s3_secret_key),
+        None,
+        None,
+        None).unwrap(),
+      bucket: "rust-s3".to_string(),
+      location_supported: false,
+  };
+
+
+
   collections
 }
