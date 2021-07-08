@@ -19,9 +19,6 @@ pub enum StacRel {
   SelfRel,
   /// The root, or landing page, of the STAC API. 
   Root,
-  _ServiceDesc,
-  _ServiceDoc,
-  Parent,
   Child,
   Item
 }
@@ -146,6 +143,8 @@ pub struct ItemProperties {
 }
 
 impl ItemProperties {
+    /// converts ItemProperties into a serde Map for use
+    /// as geojson Feature properties
     pub fn to_map(&self) -> Map<String, Value> {
       let mut properties = Map::new();
 
