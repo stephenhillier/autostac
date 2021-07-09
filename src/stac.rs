@@ -177,6 +177,13 @@ pub struct Item {
   pub path: String
 }
 
+/// An item asset
+/// https://github.com/radiantearth/stac-api-spec/blob/master/stac-spec/item-spec/item-spec.md#asset-object
+#[derive(Debug, Serialize)]
+pub struct ItemAsset {
+  pub href: String
+}
+
 /// A STAC Collection.
 /// https://github.com/radiantearth/stac-api-spec/blob/master/stac-spec/collection-spec/collection-spec.md
 #[derive(Debug, Serialize)]

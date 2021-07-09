@@ -11,19 +11,6 @@ use wkt::Wkt;
 use crate::transform;
 use crate::catalog;
 
-/// returns a tile from a collection item covering the tile defined by its x/y/z address.
-fn _tile(collection_id: String, z: u8, x:u32, y:u32, coverage: &State<catalog::Service>) -> String {
-  let bounds: Geometry<f64> = transform::to_bounds(x, y, z).try_into().unwrap();
-  let collection = coverage.collections.get(&collection_id).unwrap();
-  
-  // currently this just returns files that could provide coverage for the tile.
-  // work in progress...
-  let files_for_tile = collection.intersects(&bounds);
-
-  // stand-in for an actual tile
-  format!("{} {} {} :\n {:?} :\n {:?}", z, x, y, bounds, files_for_tile)
-}
-
 /// returns a GeoJSON FeatureCollection representing available imagery that intersects
 /// with the polygon (in WKT format) provided by the `?intersects` query.
 /// example:  /collections/imagery?intersects=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))
@@ -96,6 +83,20 @@ pub fn get_collection(collection_id: String, coverage: &State<catalog::Service>)
       
   let collection = &collection.stac_collection(&coverage.base_url);
   Some(Json(to_string(collection).unwrap()))
+}
+
+/// returns a tile from a collection item covering the tile defined by its x/y/z address.
+/// work in progress, will probably be removed.
+#[get("/tiles/<collection_id>/<z>/<x>/<y>")]
+pub fn get_tiles(collection_id: String, z: u8, x:u32, y:u32, coverage: &State<catalog::Service>) -> String {
+  let bounds: Geometry<f64> = transform::to_bounds(x, y, z).try_into().unwrap();
+  let collection = coverage.collections.get(&collection_id).unwrap();
+  
+  // currently this just returns files that could provide coverage for the tile.
+  let files_for_tile = collection.intersects(&bounds);
+
+  // stand-in for an actual tile
+  format!("{} {} {} :\n {:?} :\n {:?}", z, x, y, bounds, files_for_tile)
 }
 
 /// STAC API landing page

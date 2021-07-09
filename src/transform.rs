@@ -33,7 +33,7 @@ pub fn to_bounds(x:u32, y:u32, z: u8) -> Polygon<f64> {
 
 
 mod tests {
-  use super::*;
+  use crate::transform::{to_lng_lat, Coordinate};
   #[test]
   fn test_to_lng_lat() {
       let ul = to_lng_lat(486, 332, 10);

@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::f64;
-use std::hash::Hash;
+use std::path::Path;
 use std::path::PathBuf;
 use std::fs;
 use chrono::{DateTime, Utc};
+use http;
 use geo::polygon;
 use geo::algorithm::intersects::Intersects;
 use geo::algorithm::contains::Contains;
@@ -14,6 +15,7 @@ use geojson::FeatureCollection;
 use geojson;
 use geo_types::{Polygon, Geometry};
 use s3;
+use serde_json::to_value;
 use serde_json::{Map};
 use serde::{Serialize};
 use url;
@@ -70,7 +72,7 @@ impl ImageryCollection {
   /// Create a new ImageryCollection, populated with files found by
   /// collect_files.
   pub fn new_from_dir(id: String, title: String, description: String, dir: PathBuf) -> ImageryCollection {
-    let files = ImageryCollection::collect_files(dir, id.to_owned());
+    let files = ImageryCollection::collect_files(dir, &id);
     ImageryCollection{
       id,
       title,
@@ -82,7 +84,7 @@ impl ImageryCollection {
   /// register_images searches the imagery directory and collects
   /// metadata about valid images.  Images are valid if they can be
   /// opened by GDAL.
-  fn collect_files(dir: PathBuf, collection_id: String) -> Vec<ImageryFile> {
+  fn collect_files(dir: PathBuf, collection_id: &str) -> Vec<ImageryFile> {
     let img_dir = fs::read_dir(dir).unwrap();
 
     let mut coverage: Vec<ImageryFile> = Vec::new();
@@ -106,66 +108,73 @@ impl ImageryCollection {
         Err(_) => continue,
       };
 
-      let poly = get_extent(&dataset);
-      let crs = dataset.projection();
-      let num_bands = dataset.raster_count() as u16;
-      
-      // Check metadata for cloud coverage
-      // this is the metadata key for Sentinel-2 imagery.
-      // todo: confirm key for other sources.
-      let cloud_coverage: Option<f64> = dataset
-          .metadata_item("CLOUD_COVERAGE_ASSESSMENT", "")
-          .map(|s| s.parse::<f64>().unwrap());
+      let img = ImageryFile::new(&dataset, path, &filename, collection_id);
 
-      // Check metadata for timestamp. "PRODUCT_START_TIME" is used, but
-      // need to confirm whether this is the most appropriate timestamp.
-      let timestamp: DateTime<Utc> = match dataset
-          .metadata_item("PRODUCT_START_TIME", "")
-          .map(|s| DateTime::parse_from_rfc3339(&s).unwrap().with_timezone(&Utc)) {
-            Some(ts) => ts,
-            None => Utc::now(),
-        };
-
-
-      // capture the IMAGEDESCRIPTION tag.
-      let description: Option<String> = dataset
-          .metadata_item("TIFFTAG_IMAGEDESCRIPTION", "");
-
-      // convert extent polygon into lat/long
-      let boundary: Polygon<f64> = transform::transform_polygon(&poly, &crs, "EPSG:4326");
-
-      // add the file information to the coverage vector.
-      let properties = ImageryFileProperties {
-          filename: path.as_path().display().to_string(),
-          crs,
-          resolution: get_resolution_from_geotransform(&dataset.geo_transform().unwrap()),
-          description,
-          num_bands,
-          cloud_coverage,
-          timestamp,
-          red_band: None, // unimplemented
-          ni_band: None  // unimplemented
-      };
-
-      let file = ImageryFile{
-          path,
-          filename,
-          boundary,
-          properties,
-          collection_id: collection_id.to_owned()
-      };
-      coverage.push(file);
+      coverage.push(img);
     }
     coverage
   }
 
-  pub fn new_from_s3(
-    id: String,
-    title: String,
-    description: String,
-    s3: &Storage
+  /// Create a new collection from a prefix in an S3 bucket.
+  /// It's expected that all the collections are based on common prefixes (e.g. subfolders)
+  /// in a single S3 bucket. If anybody wants to use this differently, post an issue.
+  pub async fn new_from_s3_prefix(
+    id: &str,
+    title: &str,
+    description: &str,
+    s3_host: &str,
+    client: &s3::Client,
+    bucket: &str,
+    prefix: &str
   ) -> ImageryCollection {
-    unimplemented!();
+
+
+    // the rust AWS client expects AWS_S3_ENDPOINT to include the scheme (http/https),
+    // but GDAL expects AWS_S3_ENDPOINT to only include the host/port.
+    let endpoint = s3_host.parse::<http::Uri>().unwrap();
+    let hostname = endpoint.authority().expect("Expected a host and port in AWS_S3_ENDPOINT").as_str();
+    let _ = gdal::config::set_config_option("AWS_S3_ENDPOINT", hostname);
+
+    let mut files = Vec::new();
+
+    let results = client
+      .list_objects()
+      .bucket(bucket)
+      .prefix(prefix)
+      .send().await;
+    
+    let results = results.expect("could not get objects");
+
+    for r in results.contents.unwrap() {
+      let key = r.key.unwrap();
+      let path = String::from("/vsis3/") + bucket + "/" + &key;
+      let vsipath = Path::new(&path);
+      let dataset = match Dataset::open(&vsipath) {
+        Ok(ds) => ds,
+        Err(_) => {
+          println!("Failed to open {}", key);
+          continue
+        },
+      };
+      println!("processing {}", key);
+
+      let key_no_prefix = key.strip_prefix(&(String::from(prefix) + "/")).unwrap();
+
+      let img = ImageryFile::new(
+        &dataset,
+        vsipath.to_path_buf(),
+        key_no_prefix,
+        prefix
+      );
+      files.push(img);
+    }
+
+    ImageryCollection{
+      id: id.to_string(),
+      title: title.to_string(),
+      description: description.to_string(),
+      files
+    }
   }
 
   pub fn stac_collection(
@@ -279,6 +288,7 @@ impl Resolution {
 
 #[derive(Debug,Clone)]
 pub struct ImageryFileProperties {
+  pub path: String,
   pub filename: String,
   pub crs: String,
   pub resolution: Resolution,
@@ -325,9 +335,15 @@ impl ImageryFile {
         ]);
         let properties = self.stac_properties();
 
+        let assets = vec![
+          stac::ItemAsset{
+            href: self.properties.path.to_owned()
+          }
+        ];
+
         let mut foreign_members = Map::new();
         foreign_members.insert(String::from("links"), serde_json::Value::Array(Vec::new()));
-        foreign_members.insert(String::from("assets"), serde_json::Value::Array(Vec::new()));
+        foreign_members.insert(String::from("assets"), to_value(assets).unwrap());
         foreign_members.insert(String::from("collection"), serde_json::Value::String(self.collection_id.to_owned()));
 
         Feature {
@@ -337,6 +353,59 @@ impl ImageryFile {
             properties: Some(properties.to_map()),
             foreign_members: Some(foreign_members)
         }
+    }
+
+    /// Creates a new ImageryFile from a GDAL Dataset
+    pub fn new(dataset: &Dataset, path: PathBuf, filename: &str, collection_id: &str) -> ImageryFile {
+      let poly = get_extent(&dataset);
+      let crs = dataset.projection();
+      let num_bands = dataset.raster_count() as u16;
+      
+      // Check metadata for cloud coverage
+      // this is the metadata key for Sentinel-2 imagery.
+      // todo: confirm key for other sources.
+      let cloud_coverage: Option<f64> = dataset
+          .metadata_item("CLOUD_COVERAGE_ASSESSMENT", "")
+          .map(|s| s.parse::<f64>().unwrap());
+
+      // Check metadata for timestamp. "PRODUCT_START_TIME" is used, but
+      // need to confirm whether this is the most appropriate timestamp.
+      let timestamp: DateTime<Utc> = match dataset
+          .metadata_item("PRODUCT_START_TIME", "")
+          .map(|s| DateTime::parse_from_rfc3339(&s).unwrap().with_timezone(&Utc)) {
+            Some(ts) => ts,
+            None => Utc::now(),
+        };
+
+
+      // capture the IMAGEDESCRIPTION tag.
+      let description: Option<String> = dataset
+          .metadata_item("TIFFTAG_IMAGEDESCRIPTION", "");
+
+      // convert extent polygon into lat/long
+      let boundary: Polygon<f64> = transform::transform_polygon(&poly, &crs, "EPSG:4326");
+
+      // add the file information to the coverage vector.
+      let properties = ImageryFileProperties {
+          path: path.as_path().display().to_string(),
+          filename: filename.to_string(),
+          crs,
+          resolution: get_resolution_from_geotransform(&dataset.geo_transform().unwrap()),
+          description,
+          num_bands,
+          cloud_coverage,
+          timestamp,
+          red_band: None, // unimplemented
+          ni_band: None  // unimplemented
+      };
+
+      ImageryFile{
+          path,
+          filename: filename.to_string(),
+          boundary,
+          properties,
+          collection_id: collection_id.to_owned()
+      }
     }
 }
 
@@ -405,44 +474,55 @@ pub fn collections_from_subdirs(dir: &str) -> HashMap<String, ImageryCollection>
 
 /* S3 integration */
 
-/// represents an S3 storage backend
-pub struct Storage {
-  name: String,
-  region: s3::Region,
-  credentials: s3::creds::Credentials,
-  bucket: String,
-  location_supported: bool,
-}
-
 /// Creates collections from an S3 bucket.
 /// Collections are created from object prefixes.
 /// For now, objects need to have a prefix to get put into a collection, e.g.:
 /// mybucket/imagery/img1.tif will put img1.tif into an `imagery` collection.
-pub fn collections_from_s3(
+pub async fn collections_from_s3(
   s3_host: &str,
   s3_bucket: &str,
   s3_access_key: &str,
   s3_secret_key: &str
 ) -> HashMap<String, ImageryCollection> {
   let mut collections: HashMap<String, ImageryCollection> = HashMap::new();
+  
+  
+  let creds = s3::Credentials::from_keys(s3_access_key, s3_secret_key, None);
 
+  let region = s3::Region::new("us-west-1");
+  let uri = s3_host.parse::<http::Uri>().unwrap();
+  let s3_config = s3::Config::builder()
+      .region(region)
+      .endpoint_resolver(s3::Endpoint::immutable(uri))
+      // .credentials_provider(s3::CredentialsProvider)
+      .credentials_provider(creds)
+      .build();
 
-  let s3 = Storage {
-      name: "s3".into(),
-      region: s3::Region::Custom {
-          region: "us-east-1".into(),
-          endpoint: s3_host.into(),
-      },
-      credentials: s3::creds::Credentials::new(
-        Some(s3_access_key),
-        Some(s3_secret_key),
-        None,
-        None,
-        None).unwrap(),
-      bucket: "rust-s3".to_string(),
-      location_supported: false,
-  };
+  let s3_client = s3::Client::from_conf(s3_config);
 
+  println!("Scanning S3 bucket {} for collections of images", s3_bucket);
+
+  let results = s3_client
+    .list_objects()
+    .bucket(s3_bucket)
+    .delimiter("/")
+    .send().await;
+
+  let prefixes = results.unwrap().common_prefixes;
+
+  for p in prefixes.unwrap() {
+      let prefix_name = p.prefix.unwrap().trim_end_matches('/').to_owned();
+      let c = ImageryCollection::new_from_s3_prefix(
+        &prefix_name,
+        &prefix_name, // in the future, a discoverable config file might be nice.
+        &prefix_name,
+        &s3_host,
+        &s3_client,
+        s3_bucket,
+        &prefix_name
+      ).await;
+      collections.insert(prefix_name.to_string(), c);
+  }
 
 
   collections
