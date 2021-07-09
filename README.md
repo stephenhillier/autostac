@@ -31,7 +31,34 @@ cp ~/Downloads/my_image.tif ./data/imagery
 
 Finally, run the server using `cargo run` and browse to http://localhost:8000/ to view the STAC API landing page.
 
+### S3
 
+RS2 supports scanning an S3 bucket.  Within that bucket, any prefixes (subdirectories) will be turned into
+collections, and any images in the bucket with prefixes will be added to their respective collections.
+
+**WARNING**:  All files will be inspected by the GDAL vsis3 virtual filesystem driver.  Use only on a bucket
+containing files you trust.
+
+Any images in the bucket that have no prefix will be skipped (e.g.:  `/mybucket/image.tif`). Currently,
+only images within subdirectories are catalogued:  `/mybucket/imagery/image.tif`.  You can make as many
+subdirectories as you want, and they will all become collections.
+
+RS2 uses the same S3 environment variables as GDAL. Example:
+
+```sh
+# Locally running Minio example
+export AWS_S3_ENDPOINT=http://localhost:9000
+
+export S3_BUCKET=mybucket
+export AWS_ACCESS_KEY_ID=minio
+export AWS_SECRET_ACCESS_KEY=minio123
+
+# required for Minio - GDAL will specify the bucket in the path instead of the subdomain.
+export AWS_VIRTUAL_HOSTING=FALSE 
+export AWS_HTTPS=NO
+
+cargo run -- --s3
+```
 ## Goals
 
 * catalogue spatial data (digital elevation models, satellite imagery, point clouds) in a directory tree or S3 bucket
