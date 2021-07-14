@@ -158,11 +158,14 @@ impl ImageryCollection {
       };
       println!("processing {}", key);
 
+      // create a link to this object on the S3 server.
+      // we might need to make this more configurable (bucket.example.com vs example.com/bucket)
+      let href = String::from(s3_host) + "/" + bucket + "/" + &key;
       let key_no_prefix = key.strip_prefix(&(String::from(prefix) + "/")).unwrap();
 
       let img = ImageryFile::new(
         &dataset,
-        vsipath.to_path_buf(),
+        href.into(),
         key_no_prefix,
         prefix
       );

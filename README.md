@@ -59,6 +59,7 @@ export AWS_HTTPS=NO
 
 cargo run -- --s3
 ```
+
 ## Goals
 
 * catalogue spatial data (digital elevation models, satellite imagery, point clouds) in a directory tree or S3 bucket
