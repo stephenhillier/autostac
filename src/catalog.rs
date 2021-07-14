@@ -3,7 +3,7 @@ use std::f64;
 use std::path::Path;
 use std::path::PathBuf;
 use std::fs;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Utc, TimeZone};
 use http;
 use geo::polygon;
 use geo::algorithm::intersects::Intersects;
@@ -370,12 +370,12 @@ impl ImageryFile {
 
       // Check metadata for timestamp. "PRODUCT_START_TIME" is used, but
       // need to confirm whether this is the most appropriate timestamp.
+      // Also need a default value for when timestamp isn't available. Right now we're using 1900/1/1.
       let timestamp: DateTime<Utc> = match dataset
-          .metadata_item("PRODUCT_START_TIME", "")
-          .map(|s| DateTime::parse_from_rfc3339(&s).unwrap().with_timezone(&Utc)) {
-            Some(ts) => ts,
-            None => Utc::now(),
-        };
+          .metadata_item("PRODUCT_START_TIME", "") {
+            Some(ts) => DateTime::parse_from_rfc3339(&ts).unwrap().with_timezone(&Utc),
+            None => Utc.ymd(1900, 1, 1).and_hms(0, 0, 0),
+          };
 
 
       // capture the IMAGEDESCRIPTION tag.
