@@ -7,6 +7,10 @@ services:
     command: sh -c "sleep 3; rs2"
     environment:
       AWS_S3_ENDPOINT: http://minio:9000
+      # S3_BUCKET - to create this bucket, make a dir within ./data
+      # mkdir -p ./data/bucket
+      # To catalog images, make subfolders within this dir e.g. ./data/bucket/images/myimage.tif
+      # this will add `myimage.tif` to an `images` collection.
       S3_BUCKET: bucket
       AWS_ACCESS_KEY_ID: minio
       AWS_SECRET_ACCESS_KEY: minio123
