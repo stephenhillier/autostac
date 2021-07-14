@@ -14,9 +14,9 @@ services:
       S3_BUCKET: bucket
       AWS_ACCESS_KEY_ID: minio
       AWS_SECRET_ACCESS_KEY: minio123
-      RS2_USE_S3: 1
+      RS2_USE_S3: "TRUE"
       AWS_VIRTUAL_HOSTING: "FALSE"
-      AWS_HTTPS: "NO"
+      AWS_HTTPS: "FALSE"
       ROCKET_ADDRESS: "0.0.0.0"
     ports:
       - "8000:8000"
