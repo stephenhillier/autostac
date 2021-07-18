@@ -4,7 +4,7 @@ services:
     build:
       dockerfile: ./docker/Dockerfile
       context: .
-    command: sh -c "sleep 3; rs2"
+    command: sh -c "sleep 3; rs2 --s3"
     environment:
       AWS_S3_ENDPOINT: http://minio:9000
       # S3_BUCKET - to create this bucket, make a dir within ./data
@@ -14,7 +14,6 @@ services:
       S3_BUCKET: bucket
       AWS_ACCESS_KEY_ID: minio
       AWS_SECRET_ACCESS_KEY: minio123
-      RS2_USE_S3: "TRUE"
       AWS_VIRTUAL_HOSTING: "FALSE"
       AWS_HTTPS: "FALSE"
       ROCKET_ADDRESS: "0.0.0.0"

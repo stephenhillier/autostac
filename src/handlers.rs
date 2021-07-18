@@ -2,7 +2,7 @@ use std::convert::TryInto;
 use std::f64;
 use std::u32;
 use std::u8;
-use geo_types::Geometry;
+use geo_types::{Geometry, Polygon};
 use catalog::AsFeatureCollection;
 use serde_json::{to_string};
 use rocket::{State, response::content::Json};
@@ -10,6 +10,61 @@ use rocket::response::status::BadRequest;
 use wkt::Wkt;
 use crate::transform;
 use crate::catalog;
+
+/// parse WKT supplied in a query param
+fn query_to_bounds(query_str: &str) -> Result<Geometry<f64>, BadRequest<String>> {
+  // convert the contains query into a Geometry.
+  // WKT format is expected.
+  // If any errors occur, respond to the request with a 400 error.
+  let wkt_geom = match Wkt::from_str(query_str) {
+    Ok(w) => w,
+    Err(_) => return Err(BadRequest(
+        Some("Invalid WKT in `contains` query param. Example of a valid query: \
+            ?contains=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))".into()))),
+  };
+
+  let bounds: Geometry<f64> = match wkt_geom.try_into() {
+      Ok(g) => g,
+      Err(_) => return Err(BadRequest(
+          Some("Invalid WKT in `contains` query param. Example of a valid query: \
+              ?contains=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))".into()))),
+    };
+
+  Ok(bounds)
+}
+
+/// returns a GeoJSON FeatureCollection representing available imagery that intersects
+/// with the polygon (in WKT format) provided by the `?contains` query.
+/// example:  /collections/imagery?contains=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))
+#[get("/collections/<collection_id>?<contains>")]
+pub fn collection_items_containing_polygon(
+  collection_id: String,
+  contains: &str,
+  coverage: &State<catalog::Service>
+) -> Result<Option<Json<String>>, BadRequest<String>> {
+
+  let bounds = query_to_bounds(contains)?;
+
+  // currently "Polygon contains Geometry" is not supported in the geo library.
+  // for now, return an error if anything other than a polygon was supplied.
+  let bounds: Polygon<f64> = match bounds.try_into() {
+    Ok(p) => p,
+    Err(_) => return Err(BadRequest(
+      Some("Only polygons are supported for `contains` queries at the moment. Please file an issue.".into())
+    ))
+  };
+
+  // find our collection.  If None is returned by collections.get(), we'll return
+  // none too. This will turn into a 404 error.
+  let collection = match coverage.collections.get(&collection_id) {
+      Some(c) => c,
+      None => return Ok(None),
+  };
+
+  let imagery = collection.contains(&bounds).as_feature_collection();
+  Ok(Some(Json(to_string(&imagery).unwrap())))
+}
+
 
 /// returns a GeoJSON FeatureCollection representing available imagery that intersects
 /// with the polygon (in WKT format) provided by the `?intersects` query.
@@ -21,22 +76,7 @@ pub fn collection_items_intersecting_polygon(
   coverage: &State<catalog::Service>
 ) -> Result<Option<Json<String>>, BadRequest<String>> {
 
-  // convert the intersects query into a Geometry.
-  // WKT format is expected.
-  // If any errors occur, respond to the request with a 400 error.
-  let wkt_geom = match Wkt::from_str(intersects) {
-      Ok(w) => w,
-      Err(_) => return Err(BadRequest(
-          Some("Invalid WKT in `intersects` query param. Example of a valid query: \
-              ?intersects=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))".into()))),
-  };
-
-  let bounds: Geometry<f64> = match wkt_geom.try_into() {
-      Ok(g) => g,
-      Err(_) => return Err(BadRequest(
-          Some("Invalid WKT in `intersects` query param. Example of a valid query: \
-              ?intersects=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))".into()))),
-  };
+  let bounds = query_to_bounds(intersects)?;
 
   // find our collection.  If None is returned by collections.get(), we'll return
   // none too. This will turn into a 404 error.

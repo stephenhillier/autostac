@@ -1,4 +1,7 @@
 #[macro_use] extern crate rocket;
+use rocket::{Request, Response};
+use rocket::fairing::{Fairing, Info, Kind};
+use rocket::http::Header;
 use std::collections::HashMap;
 use std::u8;
 use serde::Deserialize;
@@ -34,7 +37,7 @@ struct Opt {
     ///
     /// this redundant option is in place to prevent accidently
     /// starting the application with AWS_ env vars set.
-    #[structopt(long, env = "RS2_USE_S3", requires="s3-host")]
+    #[structopt(long, requires="s3-host")]
     s3: bool,
 
     /// S3 host to use.
@@ -77,6 +80,28 @@ struct Opt {
     base_url: String
 }
 
+pub struct CORS;
+
+// https://github.com/SergioBenitez/Rocket/issues/25#issuecomment-838566038
+#[rocket::async_trait]
+impl Fairing for CORS {
+    fn info(&self) -> Info {
+        Info {
+            name: "CORS headers",
+            kind: Kind::Response,
+        }
+    }
+
+    async fn on_response<'r>(&self, _request: &'r Request<'_>, response: &mut Response<'r>) {
+        response.set_header(Header::new("Access-Control-Allow-Origin", "*"));
+        response.set_header(Header::new(
+            "Access-Control-Allow-Methods",
+            "GET, OPTIONS",
+        ));
+        response.set_header(Header::new("Access-Control-Allow-Headers", "*"));
+    }
+}
+
 #[rocket::main]
 async fn main() {
 
@@ -107,12 +132,14 @@ async fn main() {
 
     // start application
     let _app = rocket::build()
+        .attach(CORS)
         .manage(svc)
         // STAC conforming API.
         // routes are slowly being moved here.
         .mount(
             "/",
             routes![
+            handlers::collection_items_containing_polygon,
             handlers::collection_items_intersecting_polygon,
             handlers::get_collection_item,
             handlers::get_collection,    

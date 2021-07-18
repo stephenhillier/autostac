@@ -4,6 +4,8 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::fs;
 use chrono::{DateTime, Utc, TimeZone};
+use geo::point;
+use geo::prelude::HaversineDistance;
 use http;
 use geo::polygon;
 use geo::algorithm::intersects::Intersects;
@@ -15,6 +17,7 @@ use geojson::FeatureCollection;
 use geojson;
 use geo_types::{Polygon, Geometry};
 use s3;
+use serde_json::Value;
 use serde_json::to_value;
 use serde_json::{Map};
 use serde::{Serialize};
@@ -224,7 +227,7 @@ impl ImageryCollection {
 
   /// returns files in ImageryCollection whose extent contains geom (geom should use lat/lng)
   /// todo: make more generic
-  pub fn _contains(&self, geom: &Polygon<f64>) -> Vec<ImageryFile> {
+  pub fn contains(&self, geom: &Polygon<f64>) -> Vec<ImageryFile> {
     let mut matching_files: Vec<ImageryFile> = Vec::new();
     for f in self.files.iter() {
         if f.boundary.contains(geom) {
@@ -338,11 +341,15 @@ impl ImageryFile {
         ]);
         let properties = self.stac_properties();
 
-        let assets = vec![
-          stac::ItemAsset{
+        let mut assets: Map<String, Value> = Map::new();
+
+        // create the default "file" asset.
+        // this points to the actual file that was catalogued.
+        // in the future, it might be nice to create assets from bands.
+        let file_asset: Value =  to_value(stac::ItemAsset{
             href: self.properties.path.to_owned()
-          }
-        ];
+        }).unwrap();
+        assets.insert("file".to_string(), file_asset);
 
         let mut foreign_members = Map::new();
         foreign_members.insert(String::from("links"), serde_json::Value::Array(Vec::new()));
@@ -392,8 +399,8 @@ impl ImageryFile {
       let properties = ImageryFileProperties {
           path: path.as_path().display().to_string(),
           filename: filename.to_string(),
-          crs,
-          resolution: get_resolution_from_geotransform(&dataset.geo_transform().unwrap()),
+          crs: crs.to_owned(),
+          resolution: get_resolution(&dataset),
           description,
           num_bands,
           cloud_coverage,
@@ -412,13 +419,46 @@ impl ImageryFile {
     }
 }
 
-/// get_resolution_from_geotransform uses a raster image's geotransform
-/// to determine the resolution.
+/// get_resolution uses a raster image's geotransform to determine the resolution.
 /// https://gdal.org/tutorials/geotransforms_tut.html
-fn get_resolution_from_geotransform(geotransform: &[f64]) -> Resolution {
-  let xwidth = (geotransform[1].powi(2) + geotransform[2].powi(2)).sqrt();
-  let ywidth = (geotransform[5].powi(2) + geotransform[4].powi(2)).sqrt();
-  Resolution{x: xwidth, y: ywidth}
+fn get_resolution(dataset: &Dataset) -> Resolution {
+  let crs = dataset.projection();
+  let [xmin, xsize, xskew, ymax, yskew, ysize] = dataset.geo_transform().unwrap();
+  let mut xpixel = (xsize.powi(2) + xskew.powi(2)).sqrt();
+  let mut ypixel = (ysize.powi(2) + yskew.powi(2)).sqrt();
+
+  // upper left
+  let p0 = point!(
+    x:    xmin,
+    y:    ymax 
+  );
+  let p1 = transform::transform_point(p0, &crs, "EPSG:4326");
+
+  // HELP!  How do we check if our coordinates are latlng?
+  // this is a terrible method and can probably give a false positive in some areas.
+  println!("{:?}", crs);
+  if xmin.abs() < 180. && ymax.abs() < 90. && (p1.x() - p0.x()).abs() < 0.000001 {
+    // upper right
+    let x1 = point!(
+      x: xmin + xpixel,
+      y: ymax
+    );
+    let x1 = transform::transform_point(x1, &crs, "EPSG:4326");
+
+    println!("{:?}", ypixel);
+    // lower left
+    let y1 = point!(
+      x: xmin,
+      y: ymax + ypixel
+    );
+    let y1 = transform::transform_point(y1, &crs, "EPSG:4326");
+    xpixel = p0.haversine_distance(&x1);
+    ypixel = p0.haversine_distance(&y1);
+  }
+
+
+
+  Resolution{x: xpixel, y: ypixel}
 }
 
 /// get_extent calculates the extent of a given dataset and
@@ -428,7 +468,7 @@ fn get_extent(dataset: &Dataset) -> Polygon<f64> {
   let (width, height) = dataset.raster_size();
 
   // this calculation tosses out skew, but incorporating the pixel widths from
-  // get_resolution_from_geotransform (which include skew) seems to return incorrect results.
+  // get_resolution (which include skew) seems to return incorrect results.
   // TODO: get a test for both functions asap.
   let xmax = xmin + width as f64 * x_size;
   let ymax = ymin + height as f64 * y_size;

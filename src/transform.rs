@@ -2,11 +2,16 @@ use std::f64::consts::PI;
 use geo::algorithm::map_coords::MapCoords;
 use geo::polygon;
 use proj::Proj;
-use geo_types::{Polygon,Coordinate};
+use geo_types::{Polygon, Point, Coordinate};
 
 pub fn transform_polygon(poly: &Polygon<f64>, from_crs: &str, to_crs: &str) -> Polygon<f64> {
   let func = Proj::new_known_crs(from_crs, to_crs, None).unwrap();
   poly.map_coords(|&x| func.convert(x).unwrap())
+}
+
+pub fn transform_point(p: Point<f64>, from_crs: &str, to_crs: &str) -> Point<f64> {
+  let func = Proj::new_known_crs(from_crs, to_crs, None).unwrap();
+  func.convert(p).unwrap()
 }
 
 /// convert XYZ tiles into lat/long.
