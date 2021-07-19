@@ -70,18 +70,18 @@ Collections will be advertised as child links from the landing page.
 
 The collections endpoint (`/collections/<collection_id>`) supports filtering using the following query params:
 
-#### Intersects
+**Intersects**
 
-`intersects` returns imagery that intersects with any part of the query geometry.
+`intersects` takes a WKT geometry and returns imagery that intersects with any part of that query geometry.
 
 Example:
 
 `http://localhost:8000/collections/my_collection?intersects=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))`
 
 
-#### Contains
+**Contains**
 
-`contains` returns imagery that completely contains the query geometry. Note that only polygons are supported right now. Use contains
+`contains` takes a WKT geometry returns imagery that completely contains the query geometry. Note that only polygons are supported right now. Use `contains`
 if you want to find an image that gives you full coverage over your area of interest.  Images may still have NoData values, cloud cover etc. over
 the area of interest.
 
@@ -90,7 +90,7 @@ Example:
 `http://localhost:8000/collections/my_collection?contains=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))`
 
 
-#### Filtering by date
+**Filtering by date**
 
 Todo.
 
