@@ -7,7 +7,7 @@ with Collections and Items generated from the objects inside.
 
 This is a work in progress and currently the assets themselves are not served (just catalogued).
 
-## Usage
+## Running the service
 
 Warning: This is a proof of concept! Use at own risk. Starting the server will attempt to open each file in the
 specified directory with the `GDALOpen` function from the Georust GDAL bindings crate. If GDALOpen is unable to open
@@ -31,7 +31,7 @@ cp ~/Downloads/my_image.tif ./data/imagery
 
 Finally, run the server using `cargo run` and browse to http://localhost:8000/ to view the STAC API landing page.
 
-### S3
+## S3
 
 RS2 supports scanning an S3 bucket.  Within that bucket, any prefixes (subdirectories) will be turned into
 collections, and any images in the bucket with prefixes will be added to their respective collections.
@@ -60,6 +60,40 @@ export AWS_HTTPS=NO
 cargo run -- --s3
 ```
 
+## Browsing and querying the STAC API
+
+The STAC API can be browsed by visiting the landing page at the root URL (e.g. `http://localhost:8000/`).  You can also use a STAC browser like https://github.com/radiantearth/stac-browser.
+
+Collections will be advertised as child links from the landing page.
+
+### Filtering collections
+
+The collections endpoint (`/collections/<collection_id>`) supports filtering using the following query params:
+
+#### Intersects
+
+`intersects` returns imagery that intersects with any part of the query geometry.
+
+Example:
+
+`http://localhost:8000/collections/my_collection?intersects=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))`
+
+
+#### Contains
+
+`contains` returns imagery that completely contains the query geometry. Note that only polygons are supported right now. Use contains
+if you want to find an image that gives you full coverage over your area of interest.  Images may still have NoData values, cloud cover etc. over
+the area of interest.
+
+Example:
+
+`http://localhost:8000/collections/my_collection?contains=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))`
+
+
+#### Filtering by date
+
+Todo.
+
 ## Goals
 
 * catalogue spatial data (digital elevation models, satellite imagery, point clouds) in a directory tree or S3 bucket
@@ -72,11 +106,8 @@ cargo run -- --s3
 Collections are created from subdirectories, and any raster files within those subdirectories are added to their respective
 collection.  The files themselves are not yet served, just catalogued.
 
-Collections can be filtered with the `intersects` query param, which will return a FeatureCollection of STAC Item features. Example:
-
-`http://localhost:8000/collections/imagery?intersects=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))`
+Collections can be filtered with query params, which will return a FeatureCollection of STAC Item features.
 
 ### Todo list
-* Error handling.
-* S3 support
 * Date/time search
+* Sort by date, resolution, cloud cover.
