@@ -139,8 +139,6 @@ async fn main() {
         .mount(
             "/",
             routes![
-            handlers::collection_items_containing_polygon,
-            handlers::collection_items_intersecting_polygon,
             handlers::get_collection_item,
             handlers::get_collection,    
             handlers::get_tiles,

@@ -58,7 +58,15 @@ impl Service {
 /// Convert a list of imagery metadata into a GeoJSON FeatureCollection
 pub trait AsFeatureCollection {
   /// converts a collection of files into a GeoJSON FeatureCollection
-  fn as_feature_collection(self) -> FeatureCollection;
+  fn as_feature_collection(&self) -> FeatureCollection;
+}
+
+pub trait ImageContainsPolygon {
+  fn contains_polygon(&self, geom: &Polygon<f64>) -> Vec<ImageryFile>;
+}
+
+pub trait ImageIntersectsGeom {
+  fn intersects(&self, geom: &Geometry<f64>) -> Vec<ImageryFile>;
 }
 
 /// ImageryCollection stores metadata about spectral imagery files such as
@@ -214,28 +222,6 @@ impl ImageryCollection {
     &self.files
   }
 
-  /// Returns files in ImageryCollection that intersect with geom (lat/lng / EPSG:4326)
-  pub fn intersects(&self, geom: &Geometry<f64>) -> Vec<ImageryFile> {
-    let mut matching_files: Vec<ImageryFile> = Vec::new();
-    for f in self.files.iter() {
-        if f.boundary.intersects(geom) {
-            matching_files.push(f.to_owned());
-        }
-    };
-    matching_files
-  }
-
-  /// returns files in ImageryCollection whose extent contains geom (geom should use lat/lng)
-  /// todo: make more generic
-  pub fn contains(&self, geom: &Polygon<f64>) -> Vec<ImageryFile> {
-    let mut matching_files: Vec<ImageryFile> = Vec::new();
-    for f in self.files.iter() {
-        if f.boundary.contains(geom) {
-            matching_files.push(f.to_owned());
-        }
-    };
-    matching_files
-  }
 
   /// get an item by its ID.
   pub fn get_item(&self, item_id: String) -> Option<&ImageryFile> {
@@ -248,9 +234,9 @@ impl ImageryCollection {
   }
 }
 
-impl AsFeatureCollection for &Vec<ImageryFile> {
+impl AsFeatureCollection for Vec<ImageryFile> {
   /// converts a vec of ImageryFiles into a FeatureCollection
-  fn as_feature_collection(self) -> FeatureCollection {
+  fn as_feature_collection(&self) -> FeatureCollection {
     let mut fc = FeatureCollection {
       bbox: None,
       features: vec![],
@@ -260,6 +246,35 @@ impl AsFeatureCollection for &Vec<ImageryFile> {
         fc.features.push(rast.to_stac_feature());
     };
     fc
+  }
+}
+
+impl ImageContainsPolygon for Vec<ImageryFile> {
+  /// returns files in a vector of ImageryFiles whose extent contains geom (geom should use lat/lng)
+  /// note on inconsistent naming:  `contains` conflicts with the contains method available on all Vectors.
+  /// todo: make more generic
+  fn contains_polygon(&self, geom: &Polygon<f64>) -> Vec<ImageryFile> {
+    let mut matching_files: Vec<ImageryFile> = Vec::new();
+    for f in self.iter() {
+        if f.boundary.contains(geom) {
+            matching_files.push(f.to_owned());
+        }
+    };
+    matching_files
+  }
+}
+
+impl ImageIntersectsGeom for Vec<ImageryFile> {
+
+  /// Returns files in ImageryCollection that intersect with geom (lat/lng / EPSG:4326)
+  fn intersects(&self, geom: &Geometry<f64>) -> Vec<ImageryFile> {
+    let mut matching_files: Vec<ImageryFile> = Vec::new();
+    for f in self.iter() {
+        if f.boundary.intersects(geom) {
+            matching_files.push(f.to_owned());
+        }
+    };
+    matching_files
   }
 }
 

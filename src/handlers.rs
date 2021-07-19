@@ -1,3 +1,4 @@
+use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::f64;
 use std::u32;
@@ -8,6 +9,9 @@ use serde_json::{to_string};
 use rocket::{State, response::content::Json};
 use rocket::response::status::BadRequest;
 use wkt::Wkt;
+use crate::catalog::ImageContainsPolygon;
+use crate::catalog::ImageIntersectsGeom;
+use crate::catalog::ImageryFile;
 use crate::transform;
 use crate::catalog;
 
@@ -33,62 +37,6 @@ fn query_to_bounds(query_str: &str) -> Result<Geometry<f64>, BadRequest<String>>
   Ok(bounds)
 }
 
-/// returns a GeoJSON FeatureCollection representing available imagery that intersects
-/// with the polygon (in WKT format) provided by the `?contains` query.
-/// example:  /collections/imagery?contains=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))
-#[get("/collections/<collection_id>?<contains>")]
-pub fn collection_items_containing_polygon(
-  collection_id: String,
-  contains: &str,
-  coverage: &State<catalog::Service>
-) -> Result<Option<Json<String>>, BadRequest<String>> {
-
-  let bounds = query_to_bounds(contains)?;
-
-  // currently "Polygon contains Geometry" is not supported in the geo library.
-  // for now, return an error if anything other than a polygon was supplied.
-  let bounds: Polygon<f64> = match bounds.try_into() {
-    Ok(p) => p,
-    Err(_) => return Err(BadRequest(
-      Some("Only polygons are supported for `contains` queries at the moment. Please file an issue.".into())
-    ))
-  };
-
-  // find our collection.  If None is returned by collections.get(), we'll return
-  // none too. This will turn into a 404 error.
-  let collection = match coverage.collections.get(&collection_id) {
-      Some(c) => c,
-      None => return Ok(None),
-  };
-
-  let imagery = collection.contains(&bounds).as_feature_collection();
-  Ok(Some(Json(to_string(&imagery).unwrap())))
-}
-
-
-/// returns a GeoJSON FeatureCollection representing available imagery that intersects
-/// with the polygon (in WKT format) provided by the `?intersects` query.
-/// example:  /collections/imagery?intersects=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))
-#[get("/collections/<collection_id>?<intersects>")]
-pub fn collection_items_intersecting_polygon(
-  collection_id: String,
-  intersects: &str,
-  coverage: &State<catalog::Service>
-) -> Result<Option<Json<String>>, BadRequest<String>> {
-
-  let bounds = query_to_bounds(intersects)?;
-
-  // find our collection.  If None is returned by collections.get(), we'll return
-  // none too. This will turn into a 404 error.
-  let collection = match coverage.collections.get(&collection_id) {
-      Some(c) => c,
-      None => return Ok(None),
-  };
-
-  let imagery = collection.intersects(&bounds).as_feature_collection();
-  Ok(Some(Json(to_string(&imagery).unwrap())))
-}
-
 /// STAC API Item endpoint
 /// returns a GeoJSON Feature representing the item.
 /// https://github.com/radiantearth/stac-api-spec/blob/master/stac-spec/item-spec/README.md
@@ -111,19 +59,59 @@ pub fn get_collection_item(
   Some(Json(to_string(&item.to_stac_feature()).unwrap()))
 }
 
-/// STAC API collections endpoint
-/// Returns a STAC Collection JSON representation of the collection with ID `collection_id`
-/// https://github.com/radiantearth/stac-api-spec/blob/master/stac-spec/collection-spec/README.md
-#[get("/collections/<collection_id>")]
-pub fn get_collection(collection_id: String, coverage: &State<catalog::Service>) -> Option<Json<String>> {
+/// Details for a single collection.  The collection that matches `collection_id`
+/// will be represented as a filtered FeatureCollection if an `intersects` or `contains` filter
+/// is supplied; or if no filter supplied, a STAC Collection will be returned.
+/// example:  /collections/imagery?intersects=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))
+/// If both intersects and contains are provided, the two filters will be chained together
+/// (with intersects before contains).
+#[get("/collections/<collection_id>?<intersects>&<contains>")]
+pub fn get_collection(
+  collection_id: String,
+  intersects: Option<&str>,
+  contains: Option<&str>,
+  coverage: &State<catalog::Service>
+) -> Result<Option<Json<String>>, BadRequest<String>> {
+
+  // find our collection.  If None is returned by collections.get(), we'll return
+  // none too. This will turn into a 404 error.
   let collection = match coverage.collections.get(&collection_id) {
       Some(c) => c,
-      None => return None,
+      None => return Ok(None), // 404
   };
-      
-  let collection = &collection.stac_collection(&coverage.base_url);
-  Some(Json(to_string(collection).unwrap()))
+
+  // check if any filters were supplied. If not, return a STAC collection.
+  match intersects.is_none() && contains.is_none() {
+    true => {
+      let stac_collection = &collection.stac_collection(&coverage.base_url);
+      return Ok(Some(Json(to_string(stac_collection).unwrap())));
+    },
+    false => (),
+  };
+
+  let mut filtered_images: Vec<ImageryFile>;
+
+  // filter on possible intersects value
+  match intersects {
+    Some(wkt) => {
+      let bounds = query_to_bounds(wkt)?;
+      filtered_images = collection.all().intersects(&bounds);
+    },
+    None => filtered_images = collection.all().to_vec(),
+  };
+
+  // filter on possible contains value
+  match contains {
+    Some(wkt) => {
+      let bounds = Polygon::try_from(query_to_bounds(wkt)?).unwrap();
+      filtered_images = filtered_images.contains_polygon(&bounds);
+    },
+    None => (),
+  };
+
+  Ok(Some(Json(to_string(&filtered_images.as_feature_collection()).unwrap())))
 }
+
 
 /// returns a tile from a collection item covering the tile defined by its x/y/z address.
 /// work in progress, will probably be removed.
@@ -133,7 +121,7 @@ pub fn get_tiles(collection_id: String, z: u8, x:u32, y:u32, coverage: &State<ca
   let collection = coverage.collections.get(&collection_id).unwrap();
   
   // currently this just returns files that could provide coverage for the tile.
-  let files_for_tile = collection.intersects(&bounds);
+  let files_for_tile = collection.all().intersects(&bounds);
 
   // stand-in for an actual tile
   format!("{} {} {} :\n {:?} :\n {:?}", z, x, y, bounds, files_for_tile)
