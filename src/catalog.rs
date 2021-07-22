@@ -232,6 +232,27 @@ impl ImageryCollection {
     }
     None
   }
+  /// Returns files in ImageryCollection that intersect with geom (lat/lng / EPSG:4326)
+  pub fn intersects(&self, geom: &Geometry<f64>) -> Vec<ImageryFile> {
+    let mut matching_files: Vec<ImageryFile> = Vec::new();
+    for f in self.files.iter() {
+        if f.boundary.intersects(geom) {
+            matching_files.push(f.to_owned());
+        }
+    };
+    matching_files
+  }
+  /// returns files in a vector of ImageryFiles whose extent contains geom (geom should use lat/lng)
+  /// todo: make more generic
+  pub fn contains(&self, geom: &Polygon<f64>) -> Vec<ImageryFile> {
+    let mut matching_files: Vec<ImageryFile> = Vec::new();
+    for f in self.files.iter() {
+        if f.boundary.contains(geom) {
+            matching_files.push(f.to_owned());
+        }
+    };
+    matching_files
+  }
 }
 
 impl AsFeatureCollection for Vec<ImageryFile> {

@@ -70,7 +70,7 @@ struct Opt {
     title: String,
 
     /// Description of the service
-    #[structopt(default_value = "./data", long, env = "RS2_SERVICE_DESCRIPTION")]
+    #[structopt(default_value = "An automatic STAC API from a directory or S3 bucket", long, env = "RS2_SERVICE_DESCRIPTION")]
     description: String,
 
     /// The base url that each collection will be advertised at.

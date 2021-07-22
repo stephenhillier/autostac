@@ -94,6 +94,25 @@ Example:
 
 Todo.
 
+### Sorting (filtered collections only)
+
+Collections that have been filtered can also be sorted.  Currently only the `spatial_resolution` property is supported for sorting.
+
+Collections that have not been filtered return a normal STAC collection and this will not be sorted (TODO).
+
+Example:
+`http://localhost:8000/collections/my_collection?contains=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))&sortby=spatial_resolution`
+
+### Limit (filtered collections only)
+
+Filtered collections that return a FeatureCollection can have a limit applied. `limit=n` will cause the FeatureCollection's Feature list
+to have at most `n` features (where n is an integer).  The example below will return the highest resolution dataset that completely covers
+the area of interest.
+
+Example:
+
+`http://localhost:8000/collections/my_collection?contains=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))&sortby=spatial_resolution&limit=1`
+
 ## Goals
 
 * catalogue spatial data (digital elevation models, satellite imagery, point clouds) in a directory tree or S3 bucket

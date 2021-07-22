@@ -15,6 +15,11 @@ use crate::catalog::ImageryFile;
 use crate::transform;
 use crate::catalog;
 
+enum SortOrder {
+  Asc,
+  Desc
+}
+
 /// parse WKT supplied in a query param
 fn query_to_bounds(query_str: &str) -> Result<Geometry<f64>, BadRequest<String>> {
   // convert the contains query into a Geometry.
@@ -63,14 +68,14 @@ pub fn get_collection_item(
 /// will be represented as a filtered FeatureCollection if an `intersects` or `contains` filter
 /// is supplied; or if no filter supplied, a STAC Collection will be returned.
 /// example:  /collections/imagery?intersects=POLYGON ((30 10, 40 40, 20 40, 10 20, 30 10))
-/// If both intersects and contains are provided, the two filters will be chained together
-/// (with intersects before contains).
-#[get("/collections/<collection_id>?<intersects>&<contains>")]
+#[get("/collections/<collection_id>?<intersects>&<contains>&<sortby>&<limit>")]
 pub fn get_collection(
   collection_id: String,
   intersects: Option<&str>,
   contains: Option<&str>,
-  coverage: &State<catalog::Service>
+  sortby: Option<&str>,
+  limit: Option<usize>,
+  coverage: &State<catalog::Service>,
 ) -> Result<Option<Json<String>>, BadRequest<String>> {
 
   // find our collection.  If None is returned by collections.get(), we'll return
@@ -81,33 +86,88 @@ pub fn get_collection(
   };
 
   // check if any filters were supplied. If not, return a STAC collection.
-  match intersects.is_none() && contains.is_none() {
-    true => {
+  if intersects.is_none() && contains.is_none() {
       let stac_collection = &collection.stac_collection(&coverage.base_url);
       return Ok(Some(Json(to_string(stac_collection).unwrap())));
-    },
-    false => (),
   };
 
-  let mut filtered_images: Vec<ImageryFile>;
+  if intersects.is_some() && contains.is_some() {
+    return Err(BadRequest(Some("Use either intersects or contains, not both".into())))
+  }
+
+  let mut filtered_images: Vec<ImageryFile> = Vec::new();
 
   // filter on possible intersects value
   match intersects {
     Some(wkt) => {
       let bounds = query_to_bounds(wkt)?;
-      filtered_images = collection.all().intersects(&bounds);
+      filtered_images = collection.intersects(&bounds);
     },
-    None => filtered_images = collection.all().to_vec(),
+    None => (),
   };
 
   // filter on possible contains value
   match contains {
     Some(wkt) => {
       let bounds = Polygon::try_from(query_to_bounds(wkt)?).unwrap();
-      filtered_images = filtered_images.contains_polygon(&bounds);
+      filtered_images = collection.contains(&bounds);
     },
     None => (),
   };
+
+  // handle sorting.
+  // currently only "spatial_resolution" is supported.
+  match sortby {
+    Some(s) => {
+      let mut sort_key = s.trim();
+      let mut ordering = SortOrder::Asc;
+
+      println!("sortby query string is {}", s);
+
+      // note: Rocket seems to parse + as whitespace.
+      // however, since + (ascending) is the default, that behavior doesn't seem to affect our
+      // ability to sort. This code path will only be triggered using `sortby=%2Bspatial_resolution`
+      match s.strip_prefix("+") {
+        Some(v) => {
+          sort_key = v;
+        },
+        None => (),
+      }
+
+      match s.strip_prefix("-") {
+        Some(v) => {
+          ordering = SortOrder::Desc;
+          sort_key = v;
+        },
+        None => (),
+      }
+
+      // hopefully a temporary measure.
+      // ideally we could sort by any field of a Serde Map<String, Value> relatively
+      // dynamically.
+      if sort_key == "spatial_resolution" {
+        let cmp = match ordering {
+            SortOrder::Asc => |a: &ImageryFile, b: &ImageryFile| a.properties.resolution.avg().partial_cmp(&b.properties.resolution.avg()).unwrap(),
+            SortOrder::Desc => |a: &ImageryFile, b: &ImageryFile| b.properties.resolution.avg().partial_cmp(&a.properties.resolution.avg()).unwrap(),
+        } ;
+        filtered_images.sort_by(cmp)
+      }
+      else {
+        return Err(BadRequest(Some(
+              "sortby currently only supports `sortby=spatial_resolution`. \
+              Please file an issue to request sorting by more fields.".into()
+            )))
+      }     
+    },
+    None => (),
+  }
+
+  match limit {
+    Some(lim) => {
+      filtered_images = filtered_images.into_iter().take(lim).collect::<Vec<_>>();
+    },
+    None => (),
+  }
 
   Ok(Some(Json(to_string(&filtered_images.as_feature_collection()).unwrap())))
 }
