@@ -130,3 +130,5 @@ Collections can be filtered with query params, which will return a FeatureCollec
 ### Todo list
 * Date/time search
 * Sort by date, resolution, cloud cover.
+* Refactor catalog "backends" and add options - e.g. InMemoryCatalog, SqliteCatalog, PostGISCatalog, FileCatalog (flatgeobuf?) etc.
+* Export a flat STAC catalog file
