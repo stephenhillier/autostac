@@ -472,7 +472,6 @@ fn get_resolution(dataset: &Dataset) -> Resolution {
 
   // HELP!  How do we check if our coordinates are latlng?
   // this is a terrible method and can probably give a false positive in some areas.
-  println!("{:?}", crs);
   if xmin.abs() < 180. && ymax.abs() < 90. && (p1.x() - p0.x()).abs() < 0.000001 {
     // upper right
     let x1 = point!(
@@ -481,7 +480,6 @@ fn get_resolution(dataset: &Dataset) -> Resolution {
     );
     let x1 = transform::transform_point(x1, &crs, "EPSG:4326");
 
-    println!("{:?}", ypixel);
     // lower left
     let y1 = point!(
       x: xmin,
