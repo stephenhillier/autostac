@@ -1,20 +1,26 @@
 use std::convert::TryFrom;
 use std::convert::TryInto;
 use std::f64;
+use std::fs::File;
 use std::u32;
 use std::u8;
+use geo::prelude::BoundingRect;
 use geo_types::{Geometry, Polygon};
 use catalog::AsFeatureCollection;
+use rocket::http::ContentType;
 use serde_json::{to_string};
 use rocket::{State, response::content::Json};
 use rocket::response::status::BadRequest;
+use rocket::response::content::Custom;
+use vectortile::Tile;
+use vectortile::grid::Extent;
 use wkt::Wkt;
 use crate::catalog::ImageContainsPolygon;
 use crate::catalog::ImageIntersectsGeom;
 use crate::catalog::ImageryFile;
 use crate::transform;
 use crate::catalog;
-
+use crate::tiles;
 enum SortOrder {
   Asc,
   Desc
@@ -173,18 +179,37 @@ pub fn get_collection(
 }
 
 
+#[derive(Responder)]
+pub struct MvtResponder {
+    inner: File,
+    header: ContentType,
+}
+
 /// returns a tile from a collection item covering the tile defined by its x/y/z address.
 /// work in progress, will probably be removed.
 #[get("/tiles/<collection_id>/<z>/<x>/<y>")]
-pub fn get_tiles(collection_id: String, z: u8, x:u32, y:u32, coverage: &State<catalog::Service>) -> String {
+pub fn get_tiles(collection_id: String, z: u8, x:u32, y:u32, coverage: &State<catalog::Service>) -> MvtResponder {
   let bounds: Geometry<f64> = transform::to_bounds(x, y, z).try_into().unwrap();
   let collection = coverage.collections.get(&collection_id).unwrap();
   
-  // currently this just returns files that could provide coverage for the tile.
-  let files_for_tile = collection.all().intersects(&bounds);
+  let rect = bounds.bounding_rect().unwrap();
+  let bbox = Extent{
+    minx: rect.min().x,
+    maxx: rect.max().x,
+    miny: rect.min().y,
+    maxy: rect.max().y
+  };
 
-  // stand-in for an actual tile
-  format!("{} {} {} :\n {:?} :\n {:?}", z, x, y, bounds, files_for_tile)
+
+  let mvt_content_type = ContentType::new("application", "vnd.mapbox-vector-tile");
+
+  // find features that intersect with tile.
+  let files_for_tile = collection.intersects(&bounds);
+
+  MvtResponder{
+    inner: tiles::build_tile(&files_for_tile, bbox, y),
+    header: mvt_content_type
+  }
 }
 
 /// STAC API landing page

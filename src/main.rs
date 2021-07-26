@@ -11,7 +11,7 @@ mod handlers;
 mod transform;
 mod catalog;
 mod stac;
-
+mod tiles;
 
 #[derive(Debug, Deserialize, StructOpt, StructOptToml)]
 #[serde(default)]
