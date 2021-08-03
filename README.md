@@ -1,11 +1,12 @@
-# RS2 Raster Service
+# Autostac
 
-RS2 is an experimental geospatial raster data service.
+Autostac creates an instant [STAC API](https://github.com/radiantearth/stac-api-spec/blob/master/overview.md) from an S3 bucket or directory of raster data.
 
-It scans a directory and creates a [STAC API](https://github.com/radiantearth/stac-api-spec/blob/master/overview.md) complete
-with Collections and Items generated from the objects inside.
+It scans a bucket or directory and creates a catalog complete with Collections and Items generated from the objects inside. The collection endpoints
+support filtering and sorting (see below for currently implemented filter/sort options).
 
-This is a work in progress and currently the assets themselves are not served (just catalogued).
+This is a work in progress. When using with a local directory, the assets themselves are not served (just catalogued). If using in S3 mode, links to the objects
+on the S3 host will be made available.
 
 ## Running the service
 
@@ -16,16 +17,16 @@ the file, it will be skipped. A STAC Item will be created for each file that GDA
 
 clone the repo and add some imagery to a folder:
 ```sh
-git clone https://github.com/stephenhillier/rs2
-cd rs2
+git clone https://github.com/stephenhillier/autostac
+cd autostac
 
-# make a `data` directory under rs2
+# make a `data` directory under autostac
 mkdir ./data
 
 # make a subdirectory under `data`, which will be turned into a STAC Collection.
 mkdir ./data/imagery
 
-# copy some data in
+# copy some data into the subdirectory
 cp ~/Downloads/my_image.tif ./data/imagery
 ```
 
@@ -33,7 +34,7 @@ Finally, run the server using `cargo run` and browse to http://localhost:8000/ t
 
 ## S3
 
-RS2 supports scanning an S3 bucket.  Within that bucket, any prefixes (subdirectories) will be turned into
+Autostac supports scanning an S3 bucket.  Within that bucket, any prefixes (subdirectories) will be turned into
 collections, and any images in the bucket with prefixes will be added to their respective collections.
 
 **WARNING**:  All files will be inspected by the GDAL vsis3 virtual filesystem driver.  Use only on a bucket
@@ -43,7 +44,7 @@ Any images in the bucket that have no prefix will be skipped (e.g.:  `/mybucket/
 only images within subdirectories are catalogued:  `/mybucket/imagery/image.tif`.  You can make as many
 subdirectories as you want, and they will all become collections.
 
-RS2 uses the same S3 environment variables as GDAL. Example:
+Autostac uses the same S3 environment variables as GDAL. Example:
 
 ```sh
 # Locally running Minio example
@@ -130,5 +131,5 @@ Collections can be filtered with query params, which will return a FeatureCollec
 ### Todo list
 * Date/time search
 * Sort by date, resolution, cloud cover.
-* Refactor catalog "backends" and add options - e.g. InMemoryCatalog, SqliteCatalog, PostGISCatalog, FileCatalog (flatgeobuf?) etc.
+* Refactor catalog "backends" and add options - e.g. InMemoryCatalog, PostGISCatalog, FileCatalog (flatgeobuf / sqlite?) etc.
 * Export a flat STAC catalog file
