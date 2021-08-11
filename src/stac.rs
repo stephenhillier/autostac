@@ -17,9 +17,14 @@ pub enum StacRel {
   /// named SelfRel here because Self is a reserved word.
   #[serde(rename = "self")]
   SelfRel,
+
   /// The root, or landing page, of the STAC API. 
   Root,
+
+  /// A child item. e.g. a Collection is a child of a catalog
   Child,
+
+  /// An Item is a dataset that is part of a Collection.
   Item
 }
 

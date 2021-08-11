@@ -9,7 +9,6 @@ use serde_json::{to_string};
 use rocket::{State, response::content::Json};
 use rocket::response::status::BadRequest;
 use wkt::Wkt;
-use crate::catalog::ImageContainsPolygon;
 use crate::catalog::ImageIntersectsGeom;
 use crate::catalog::ImageryFile;
 use crate::transform;
@@ -122,9 +121,8 @@ pub fn get_collection(
       let mut sort_key = s.trim();
       let mut ordering = SortOrder::Asc;
 
-      println!("sortby query string is {}", s);
-
-      // note: Rocket seems to parse + as whitespace.
+      // sort by ascending
+      // note: Rocket parses + as whitespace.
       // however, since + (ascending) is the default, that behavior doesn't seem to affect our
       // ability to sort. This code path will only be triggered using `sortby=%2Bspatial_resolution`
       match s.strip_prefix("+") {
@@ -134,6 +132,7 @@ pub fn get_collection(
         None => (),
       }
 
+      // sort by descending
       match s.strip_prefix("-") {
         Some(v) => {
           ordering = SortOrder::Desc;

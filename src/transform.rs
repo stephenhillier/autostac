@@ -41,6 +41,8 @@ mod tests {
   use crate::transform::{to_lng_lat, Coordinate};
   #[test]
   fn test_to_lng_lat() {
+      // test case borrowed from mercantile's first example
+      // https://github.com/mapbox/mercantile
       let ul = to_lng_lat(486, 332, 10);
       let expected =  Coordinate{x: -9.140625, y: 53.33087298301705};
       assert_eq!(true, (ul.x - expected.x).abs() < 0.0000001);
