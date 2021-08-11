@@ -28,10 +28,10 @@ struct Opt {
     ///
     /// will create two collections "imagery" and "landuse".  These collections will be
     /// populated by the files within their respective directories.
-    #[structopt(default_value = "./data", long, short = "d", env = "RS2_CATALOG_DIR")]
+    #[structopt(default_value = "./data", long, short = "d", env = "AUTOSTAC_CATALOG_DIR")]
     dir: String,
 
-    /// RS2 will catalog from S3.
+    /// Autostac will catalog from S3.
     /// Warning: uses AWS_S3_ENDPOINT, AWS_S3_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY.
     /// Ensure these values are not set to values you don't want to use.
     ///
@@ -62,21 +62,21 @@ struct Opt {
     s3_region: Option<String>,
 
     /// ID of the service (used for the STAC landing page)
-    #[structopt(default_value = "rs2", long, env = "RS2_SERVICE_ID")]
+    #[structopt(default_value = "autostac", long, env = "AUTOSTAC_SERVICE_ID")]
     id: String,
 
     /// Title of the service
-    #[structopt(default_value = "RS2 Demo", long, env = "RS2_SERVICE_TITLE")]
+    #[structopt(default_value = "Autostac Demo", long, env = "AUTOSTAC_SERVICE_TITLE")]
     title: String,
 
     /// Description of the service
-    #[structopt(default_value = "An automatic STAC API from a directory or S3 bucket", long, env = "RS2_SERVICE_DESCRIPTION")]
+    #[structopt(default_value = "An automatic STAC API from a directory or S3 bucket", long, env = "AUTOSTAC_SERVICE_DESCRIPTION")]
     description: String,
 
     /// The base url that each collection will be advertised at.
     // this needs to be rethought to ensure the URL is in sync with the address
     // the service is listening at.
-    #[structopt(default_value = "./data", long, env = "RS2_BASE_URL")]
+    #[structopt(default_value = "./data", long, env = "AUTOSTAC_BASE_URL")]
     base_url: String
 }
 
@@ -123,9 +123,9 @@ async fn main() {
     // initialize a service catalog with some info about our service.
     // todo: these should be cli flags or read from a config file.
     let svc = catalog::Service {
-        id: String::from("rs2"),
-        title: String::from("RS2 Demo"),
-        description: String::from("Demo for the rs2 remote sensing raster data service"),
+        id: String::from("autostac"),
+        title: String::from("Autostac Demo"),
+        description: String::from("Demo for the autostac remote sensing raster data service"),
         base_url: url::Url::parse("http://localhost:8000").unwrap(),
         collections
     };

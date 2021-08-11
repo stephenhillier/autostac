@@ -142,6 +142,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cdb031dd78e28731d87d56cc8ffef4a8f36ca26c38fe2de700543e627f8a464a"
 
 [[package]]
+name = "autostac"
+version = "0.1.0"
+dependencies = [
+ "aws-sdk-s3",
+ "chrono",
+ "gdal",
+ "gdal-sys",
+ "geo",
+ "geo-booleanop",
+ "geo-types 0.7.2",
+ "geojson",
+ "http",
+ "itertools",
+ "proj",
+ "rayon",
+ "rocket",
+ "serde",
+ "serde_json",
+ "structopt",
+ "structopt-toml",
+ "tile-grid",
+ "url",
+ "wkt",
+]
+
+[[package]]
 name = "aws-auth"
 version = "0.1.0"
 source = "git+https://github.com/awslabs/aws-sdk-rust?tag=v0.0.11-alpha#6780fde33fd800c70deb27d0f096c0f2acc215b3"
@@ -1929,32 +1955,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "921904a62e410e37e215c40381b7117f830d9d89ba60ab5236170541dd25646b"
 dependencies = [
  "xmlparser",
-]
-
-[[package]]
-name = "rs2"
-version = "0.1.0"
-dependencies = [
- "aws-sdk-s3",
- "chrono",
- "gdal",
- "gdal-sys",
- "geo",
- "geo-booleanop",
- "geo-types 0.7.2",
- "geojson",
- "http",
- "itertools",
- "proj",
- "rayon",
- "rocket",
- "serde",
- "serde_json",
- "structopt",
- "structopt-toml",
- "tile-grid",
- "url",
- "wkt",
 ]
 
 [[package]]

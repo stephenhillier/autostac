@@ -1,10 +1,10 @@
 version: '3.7'
 services:
-  rs2:
+  autostac:
     build:
       dockerfile: ./docker/Dockerfile
       context: .
-    command: sh -c "sleep 3; rs2 --s3"
+    command: sh -c "sleep 3; autostac --s3"
     environment:
       AWS_S3_ENDPOINT: http://minio:9000
       # S3_BUCKET - to create this bucket, make a dir within ./data

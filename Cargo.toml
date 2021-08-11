@@ -1,5 +1,5 @@
 [package]
-name = "rs2"
+name = "autostac"
 version = "0.1.0"
 authors = ["Steve Hillier <stephenhillier@gmail.com>"]
 edition = "2018"
