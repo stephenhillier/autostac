@@ -291,7 +291,7 @@ impl ImageIntersectsGeom for Vec<ImageryFile> {
   fn intersects(&self, geom: &Geometry<f64>) -> Vec<ImageryFile> {
     let mut matching_files: Vec<ImageryFile> = Vec::new();
     for f in self.iter() {
-        if f.boundary.intersects(geom) {
+      if f.boundary.intersects(geom) {
             matching_files.push(f.to_owned());
         }
     };

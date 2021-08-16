@@ -96,7 +96,7 @@ impl Fairing for CORS {
         response.set_header(Header::new("Access-Control-Allow-Origin", "*"));
         response.set_header(Header::new(
             "Access-Control-Allow-Methods",
-            "GET, OPTIONS",
+            "GET, POST, OPTIONS",
         ));
         response.set_header(Header::new("Access-Control-Allow-Headers", "*"));
     }
@@ -142,6 +142,8 @@ async fn main() {
             handlers::get_collection_item,
             handlers::get_collection,    
             handlers::get_tiles,
+            handlers::search_all_preflight,
+            handlers::search_all_collections,
             handlers::landing
             ]
         ).launch().await;
